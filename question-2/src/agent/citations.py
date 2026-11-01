@@ -1,6 +1,7 @@
 """Check the final answer's citations against what tools actually returned in this run.
 
-- Cited ids that no tool returned are "unsupported".
+- Cited ids that no tool returned are "unsupported", and so are citation-like tokens
+  that are no valid id (e.g. [list_pulls#0]): they cannot be checked.
 - If the run found no evidence at all and the answer still cites something, the answer
   is replaced with the not-found message: it can only be invented.
 - If there was evidence but some citations are unsupported, a warning is appended.
@@ -30,14 +31,22 @@ def normalize(text: str) -> str:
     return unicodedata.normalize("NFKC", text).translate(_DASHES).translate(_BRACKETS)
 
 
+def _tokens(answer: str) -> list[str]:
+    return [
+        part.strip().lower().replace(" ", "")
+        for group in _BRACKET.findall(normalize(answer))
+        for part in re.split(r"[,;]", group)
+    ]
+
+
 def cited_ids(answer: str) -> set[str]:
-    out = set()
-    for group in _BRACKET.findall(normalize(answer)):
-        for part in re.split(r"[,;]", group):
-            token = part.strip().lower().replace(" ", "")
-            if _ID.match(token):
-                out.add(token)
-    return out
+    return {t for t in _tokens(answer) if _ID.match(t)}
+
+
+def malformed_cites(answer: str) -> set[str]:
+    """Bracketed tokens that look like citations (contain '#') but are no valid id,
+    e.g. [list_pulls#0]. They cannot be checked, so they count as unsupported."""
+    return {t for t in _tokens(answer) if "#" in t and not _ID.match(t)}
 
 
 def evidence_ids(tool: str, data: Any) -> set[str]:
@@ -67,7 +76,7 @@ class CitationCheck:
 
 def check_answer(answer: str, evidence: set[str]) -> CitationCheck:
     cited = cited_ids(answer)
-    unsupported = cited - evidence
+    unsupported = (cited - evidence) | malformed_cites(answer)
     if unsupported and not evidence:
         return CitationCheck(NOT_FOUND, cited, unsupported, replaced=True)
     if unsupported:

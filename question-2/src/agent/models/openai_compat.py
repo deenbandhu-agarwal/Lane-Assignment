@@ -5,6 +5,8 @@ Ollama (http://localhost:11434/v1), OpenAI itself. Chosen by MODEL_BASE_URL.
 
 Same policy as the Gemini adapter: client-side pacing to `rpm`; 429 waits Retry-After
 unless it is longer than MAX_WAIT_S (a daily quota), which fails fast; 5xx backs off.
+A 400 "output_parse_failed" (Groq: the model produced an unparseable tool call) is
+re-sampled; any other 400 fails at once.
 """
 
 from __future__ import annotations
@@ -127,6 +129,8 @@ class OpenAICompatClient:
                 raise ModelError(f"HTTP error: {type(e).__name__}") from e
             if r.status_code == 200:
                 return from_wire(r.json())
+            if _is_parse_failure(r) and attempt < self._max_retries:
+                continue  # model emitted an unparseable tool call; sampling again usually fixes it
             if r.status_code in RETRYABLE and attempt < self._max_retries:
                 wait = _retry_after(r, attempt)
                 if wait > MAX_WAIT_S:
@@ -135,6 +139,18 @@ class OpenAICompatClient:
                 continue
             raise ModelError(f"provider returned {r.status_code}: {r.text[:300]}")
         raise AssertionError("unreachable")
+
+
+def _is_parse_failure(r: httpx.Response) -> bool:
+    """Groq returns 400 output_parse_failed when the model's tool call is malformed.
+    It is a bad sample, not a bad request, so it is retried like a 5xx (no wait)."""
+    if r.status_code != 400:
+        return False
+    try:
+        err = r.json().get("error")
+    except (ValueError, AttributeError):
+        return False
+    return isinstance(err, dict) and err.get("code") == "output_parse_failed"
 
 
 def _retry_after(r: httpx.Response, attempt: int) -> float:

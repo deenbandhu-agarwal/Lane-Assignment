@@ -78,3 +78,19 @@ def test_400_not_retried():
     with pytest.raises(ModelError, match="400"):
         c.complete([Message("user", "q")], [])
     assert sleeps == []
+
+
+def test_output_parse_failed_is_resampled():
+    # Groq 400 seen in eval run 2 (u3): a bad sample, not a bad request
+    bad = httpx.Response(400, json={"error": {"code": "output_parse_failed", "message": "Parsing failed"}})
+    c, seen, sleeps = client([bad, ok({"content": "not found"})])
+    assert c.complete([Message("user", "q")], []).text == "not found"
+    assert len(seen) == 2 and sleeps == []
+
+
+def test_output_parse_failed_gives_up_after_max_retries():
+    bad = lambda: httpx.Response(400, json={"error": {"code": "output_parse_failed"}})
+    c, seen, _ = client([bad() for _ in range(3)], max_retries=2)
+    with pytest.raises(ModelError, match="400"):
+        c.complete([Message("user", "q")], [])
+    assert len(seen) == 3

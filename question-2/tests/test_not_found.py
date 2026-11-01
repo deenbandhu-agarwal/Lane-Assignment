@@ -76,3 +76,15 @@ def test_lenticular_brackets_and_nbsp_are_recognised_as_citations():
 
     assert cited_ids("Index lock【incident-2025-09-postmortem.md#2】") == {"incident-2025-09-postmortem.md#2"}
     assert cited_ids("see [issue#3, pr#9]") == {"issue#3", "pr#9"}
+
+
+def test_malformed_citation_is_flagged_not_silently_ignored():
+    # gpt-oss cited the tool call instead of the PR (eval run 2, m4)
+    check = check_answer("PR #10 is a draft. 【list_pulls#0】", evidence={"pr#10", "issue#7"})
+    assert check.unsupported == {"list_pulls#0"} and not check.replaced
+    assert "list_pulls#0" in check.answer and "may be wrong" in check.answer
+
+
+def test_plain_brackets_without_hash_are_not_citations():
+    check = check_answer("Use [the refresh endpoint] [a.md#1].", evidence={"a.md#1"})
+    assert check.unsupported == set() and check.answer.endswith("[a.md#1].")
