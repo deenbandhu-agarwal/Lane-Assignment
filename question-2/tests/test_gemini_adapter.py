@@ -175,3 +175,11 @@ def test_client_side_pacing_spaces_calls():
     now[0] += 2.0  # next call 2 s later
     c.complete([Message("user", "q")], [])
     assert sleeps == [pytest.approx(10.0)]  # 60/5 = 12 s spacing
+
+
+def test_daily_quota_fails_fast_instead_of_sleeping():
+    e = errors.APIError(429, {"error": {"code": 429, "message": "per day limit. Please retry in 74088s.", "status": "RESOURCE_EXHAUSTED"}})
+    c, sleeps = client([e])
+    with pytest.raises(ModelError, match="quota exhausted"):
+        c.complete([Message("user", "q")], [])
+    assert sleeps == []

@@ -52,7 +52,24 @@ def gemini_adapter():
     )
 
 
-ADAPTERS = {"fake": fake_adapter, "gemini": gemini_adapter}
+def openai_compat_adapter():
+    import httpx
+
+    from agent.models.openai_compat import OpenAICompatClient
+
+    replies = [
+        {"tool_calls": [{"id": "c1", "type": "function", "function": {"name": "echo", "arguments": '{"text": "hi"}'}}]},
+        {"content": "done"},
+    ]
+
+    def handler(_req):
+        return httpx.Response(200, json={"choices": [{"message": replies.pop(0)}],
+                                         "usage": {"prompt_tokens": 100, "completion_tokens": 20}})
+
+    return OpenAICompatClient("https://x.test/v1", "k", "openai/gpt-4o-mini", transport=httpx.MockTransport(handler))
+
+
+ADAPTERS = {"fake": fake_adapter, "gemini": gemini_adapter, "openai_compat": openai_compat_adapter}
 
 
 @pytest.mark.parametrize("name", ADAPTERS)

@@ -126,6 +126,11 @@ class HttpGitHub:
             ],
         }
 
+    # -- eval cleanup only (not exposed as a tool) ----------------------------------
+
+    def delete_issue_comment(self, comment_id: int) -> None:
+        self._request("DELETE", f"/issues/comments/{comment_id}")
+
     # -- the one write ------------------------------------------------------------
 
     def post_issue_comment(self, number: int, body: str) -> dict[str, Any]:

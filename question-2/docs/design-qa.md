@@ -103,3 +103,11 @@ Legend. **Outcome:** `decision` (changed the design) · `clarified` (no design c
 ### 21. Why is gemini-3.5-flash priced at $0.75 / $3.75 per 1M tokens?
 - **Answer:** It is not on the pricing page. The 429 shows it is served as gemini-3.6-flash, whose listed standard paid price is $0.75 input / $3.75 output (thinking tokens billed as output), valid through 2026-12-31.
 - **Outcome:** decision. Free tier spends $0; the cap uses the paid price so it stays meaningful.
+
+### 22. Can the free Gemini tier run the eval?
+- **Answer:** No. The free tier allows **20 requests per day** per model (`quotaValue: 20`, from a 429 on 2026-11-01), on top of 5 per minute. One eval run needs ~100. A bug made it worse: the client honoured the server's suggested wait (74,088 s), so every question hung until the 90 s step timeout. Now any suggested wait over 60 s fails fast as "quota exhausted".
+- **Outcome:** decision. The retrieval experiment needs no model (BM25 vs vector vs hybrid on recall@5/MRR). The agent eval moves to a second provider through a new OpenAI-compatible adapter (GitHub Models, Groq, OpenRouter, Ollama by config). That also proves the model port with a second real provider.
+
+### 23. Why are m3 and m5 not scored in the retrieval experiment?
+- **Answer:** Their question text does not contain the search terms ("Issue #3 mentions an error code…"); the agent finds them only after `get_issue`. Searching the raw question scores 0 in every mode, which measures the question, not the retriever. They are listed as not scored and still count in the agent eval.
+- **Outcome:** decision.

@@ -29,6 +29,10 @@ PRICES: dict[str, Price] = {
     # listed, so the cost cap over- rather than under-estimates. Free tier actually costs $0.
     "gemini-3.5-flash": Price(input_per_mtok=0.75, output_per_mtok=3.75),
     "gemini-3.8-flash": Price(input_per_mtok=0.75, output_per_mtok=3.75),
+    # OpenAI list prices (from memory, verify before relying on them); GitHub Models'
+    # free tier actually costs $0, the cap uses these so it stays meaningful.
+    "openai/gpt-4o-mini": Price(input_per_mtok=0.15, output_per_mtok=0.60),
+    "openai/gpt-4.1-mini": Price(input_per_mtok=0.40, output_per_mtok=1.60),
 }
 
 

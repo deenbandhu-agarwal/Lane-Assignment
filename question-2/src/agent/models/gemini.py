@@ -23,6 +23,7 @@ from agent.models.base import ModelError
 from agent.types import Message, ModelReply, ToolCall, ToolSpec, Usage
 
 RETRYABLE = {429, 500, 502, 503, 504}
+MAX_WAIT_S = 60.0  # a longer suggested wait means a daily quota is exhausted: fail fast
 _RETRY_IN = re.compile(r"retry in ([0-9.]+)s", re.I)
 
 
@@ -184,7 +185,10 @@ class GeminiClient:
                 return fn()
             except errors.APIError as e:
                 if e.code in RETRYABLE and attempt < self._max_retries:
-                    self._sleep(retry_delay(e, attempt))
+                    wait = retry_delay(e, attempt)
+                    if wait > MAX_WAIT_S:
+                        raise ModelError(f"Gemini quota exhausted (retry in {wait:.0f}s): {e.message}") from e
+                    self._sleep(wait)
                     continue
                 raise ModelError(f"Gemini API error {e.code}: {e.message}") from e
         raise AssertionError("unreachable")

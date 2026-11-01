@@ -27,6 +27,8 @@ class Settings:
     model_provider: str
     model_name: str
     gemini_api_key: str
+    model_base_url: str
+    model_api_key: str
     github_token: str
     github_repo: str
     write_allowlist: frozenset[str]
@@ -51,6 +53,8 @@ class Settings:
             model_provider=e("MODEL_PROVIDER", "gemini"),
             model_name=e("MODEL_NAME", "gemini-3.5-flash"),
             gemini_api_key=e("GEMINI_API_KEY", ""),
+            model_base_url=e("MODEL_BASE_URL", ""),
+            model_api_key=e("MODEL_API_KEY", ""),
             github_token=e("GITHUB_TOKEN", ""),
             github_repo=repo,
             write_allowlist=frozenset(r.strip() for r in e("WRITE_REPO_ALLOWLIST", repo).split(",") if r.strip()),
