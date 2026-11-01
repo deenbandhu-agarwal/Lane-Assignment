@@ -1,6 +1,6 @@
 # Question 1 — Query Catalog (API contract, draft)
 
-Status: **proposed**. Items marked ⚑ are open; the defaults proposed for them are in §6.
+Status: **decided** (2026-11-01). Items marked ⚑ were open; the decisions are in the table at the end.
 
 ---
 
@@ -148,7 +148,7 @@ Response: `200 {"deleted_series": K}` (count of series the tombstone applies to;
 7. Is `metric` required on `/series` and `DELETE`?
 8. Response size limits.
 
-### Proposed defaults for the ⚑ items (not yet confirmed)
+### Decisions for the ⚑ items (confirmed)
 
 | # | Decision | Proposed |
 |---|---|---|
@@ -159,4 +159,5 @@ Response: `200 {"deleted_series": K}` (count of series the tombstone applies to;
 | 5 | `agg` without `bucket` | One value for the whole range |
 | 6 | Tombstone form | Fixed series-id set + time range (resolved at delete time) |
 | 7 | `metric` on `/series` and `DELETE` | Optional; `DELETE` needs a metric or a filter |
-| 8 | Response size | Cap points/series per response → 400 |
+| 8 | Response size | Max 10,000 series and 5,000,000 points per query → 400 |
+| 9 | `GET /series` for a series whose points are all deleted | Still listed (the series exists; its data is gone) |

@@ -16,6 +16,8 @@ class EngineConfig:
 
     # memtable
     memtable_max_bytes: int = 64 * 1024 * 1024
+    memtable_entry_bytes: int = 100        # size estimate per entry (Python objects are not bytes)
+    memtable_max_entries: int = 2_000_000  # hard cap, whichever comes first
     skiplist_max_level: int = 12          # 4**12 ~ 16.7M entries, far above one memtable
     skiplist_p: float = 0.25              # chance to promote a node one level up
     skiplist_seed: int | None = None      # fixed in tests for repeatable shapes
