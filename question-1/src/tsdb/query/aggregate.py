@@ -84,7 +84,7 @@ def parse_bucket(text: str) -> int:
 
 
 def bucket_start(timestamp: int, bucket_ms: int) -> int:
-    raise NotImplementedError
+    return timestamp - timestamp % bucket_ms
 
 
 class BucketAggregator:
@@ -96,5 +96,17 @@ class BucketAggregator:
         self._from_ts = from_ts
 
     def run(self, points: Iterator[Point]) -> list[tuple[int, float]]:
-        """bucket_ms None -> one bucket for the whole range, keyed by from_ts."""
-        raise NotImplementedError
+        """bucket_ms None -> one bucket for the whole range, keyed by from_ts.
+        Points arrive in time order, so only the current bucket is open at any moment."""
+        out: list[tuple[int, float]] = []
+        current_start, current = None, None
+        for p in points:
+            start = self._from_ts if self._bucket_ms is None else bucket_start(p.timestamp, self._bucket_ms)
+            if start != current_start:
+                if current is not None:
+                    out.append((current_start, current.result()))
+                current_start, current = start, self._new_aggregator()
+            current.add(p.value)
+        if current is not None:
+            out.append((current_start, current.result()))
+        return out

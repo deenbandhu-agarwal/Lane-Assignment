@@ -4,6 +4,7 @@ Numbers follow the walkthrough example."""
 import pytest
 
 from tsdb.model import Point, Tombstone
+from tsdb.query.aggregate import BucketAggregator
 from tsdb.query.merge import merge_series
 
 T_10_00 = 1_730_368_800_000
@@ -48,3 +49,47 @@ def test_when_the_newest_version_is_hidden_an_older_version_never_comes_back():
     newer_file = iter([Point(3, T_10_00, 8, 31.0)])
 
     assert list(merge_series([older_file, newer_file], [DELETE_MUMBAI])) == []
+
+
+class Values:
+    """Fake aggregator: result is the tuple of values it saw (shows exactly what went where)."""
+
+    def __init__(self):
+        self.seen = []
+
+    def add(self, value):
+        self.seen.append(value)
+
+    def result(self):
+        return tuple(self.seen)
+
+
+MINUTE = 60_000
+T_10_00_30 = T_10_00 + 30_000
+T_10_00_59_999 = T_10_01 - 1
+
+
+def test_buckets_are_aligned_to_the_epoch_and_the_first_may_start_before_from():
+    points = iter([Point(1, T_10_00_30, 1, 1.0), Point(1, T_10_00_59_999, 2, 2.0),
+                   Point(1, T_10_01, 3, 3.0)])
+
+    assert BucketAggregator(Values, MINUTE, from_ts=T_10_00_30).run(points) == [
+        (T_10_00, (1.0, 2.0)),                # bucket 10:00:00 although `from` is 10:00:30
+        (T_10_01, (3.0,)),                    # 10:01:00.000 starts the next bucket
+    ]
+
+
+def test_empty_buckets_are_left_out():
+    points = iter([Point(1, T_10_00, 1, 1.0), Point(1, T_10_02, 2, 2.0)])
+
+    assert [start for start, _ in BucketAggregator(Values, MINUTE, T_10_00).run(points)] == [T_10_00, T_10_02]
+
+
+def test_no_bucket_size_means_one_value_for_the_whole_range_keyed_by_from():
+    points = iter([Point(1, T_10_00_30, 1, 1.0), Point(1, T_10_02, 2, 2.0)])
+
+    assert BucketAggregator(Values, None, from_ts=T_10_00).run(points) == [(T_10_00, (1.0, 2.0))]
+
+
+def test_no_points_gives_no_buckets():
+    assert BucketAggregator(Values, None, T_10_00).run(iter([])) == []
