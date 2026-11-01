@@ -14,6 +14,7 @@ RUN uv sync --frozen --no-install-project
 
 COPY src ./src
 COPY tests ./tests
+COPY corpus ./corpus
 COPY README.md ./
 RUN uv sync --frozen
 
