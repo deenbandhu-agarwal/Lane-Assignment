@@ -12,6 +12,7 @@ import json
 import zlib
 from pathlib import Path
 
+from tsdb.errors import CorruptFileError
 from tsdb.faults import CrashPoint
 from tsdb.model import ManifestState, TimeWindow
 from tsdb.ports import FaultInjector, FileOps
@@ -27,7 +28,10 @@ class ManifestStore:
         """None for a fresh directory. Raises CorruptFileError on a bad checksum."""
         if not self._path.exists():
             return None
-        body, _ = self._files.read_all(self._path).decode().rsplit("\ncrc32 ", 1)
+        text = self._files.read_all(self._path).decode(errors="replace")
+        body, sep, crc_line = text.rpartition("\ncrc32 ")
+        if not sep or crc_line.strip() != f"{zlib.crc32(body.encode()):08x}":
+            raise CorruptFileError(f"MANIFEST checksum mismatch in {self._path}")
         return _from_json(json.loads(body))
 
     def commit(self, state: ManifestState) -> None:

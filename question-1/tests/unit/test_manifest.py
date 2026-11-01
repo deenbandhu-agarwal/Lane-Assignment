@@ -2,6 +2,7 @@
 
 import pytest
 
+from tsdb.errors import CorruptFileError
 from tsdb.faults import NoFaults
 from tsdb.model import ManifestState, TimeWindow
 from tsdb.storage.fileio import OsFileOps
@@ -72,3 +73,25 @@ def test_the_next_commit_after_a_crash_works_and_replaces_the_leftover_tmp(tmp_p
 
     assert store(tmp_path).load() == STATE_V5
     assert not (tmp_path / "MANIFEST.tmp").exists()
+
+
+@pytest.mark.parametrize("where", ["body", "checksum line"])
+def test_one_damaged_byte_is_refused(tmp_path, where):
+    store(tmp_path).commit(STATE_V4)
+    path = tmp_path / "MANIFEST"
+    data = bytearray(path.read_bytes())
+    at = data.index(b'"next_file_no": 8') + len(b'"next_file_no": ') if where == "body" else len(data) - 3
+    data[at] = ord("9") if data[at] != ord("9") else ord("1")        # 8 -> 9 still valid JSON
+    path.write_bytes(bytes(data))
+
+    with pytest.raises(CorruptFileError):
+        store(tmp_path).load()
+
+
+def test_a_manifest_cut_short_is_refused(tmp_path):
+    store(tmp_path).commit(STATE_V4)
+    path = tmp_path / "MANIFEST"
+    path.write_bytes(path.read_bytes()[:40])
+
+    with pytest.raises(CorruptFileError):
+        store(tmp_path).load()
