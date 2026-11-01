@@ -219,7 +219,10 @@ class Agent:
                     all_malformed &= result.malformed
                     if result.ok:
                         evidence |= evidence_ids(call.name, result.data)
-                    flags = detect_injection(result.content, write_tools)
+                    # Only tool data is external text. Error results are written by us; an
+                    # unknown-tool error lists every tool name, which falsely tripped
+                    # mentions_write_tool (eval, u3: model called "repo_browser.list_issues").
+                    flags = detect_injection(result.content, write_tools) if result.ok else []
                     if flags:
                         tracer.event("injection_flag", step=step, tool=call.name, flags=flags)
                     messages.append(

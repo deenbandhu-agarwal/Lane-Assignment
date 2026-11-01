@@ -24,6 +24,10 @@ from agent.types import Message, ModelReply, ToolCall, ToolSpec, Usage
 
 RETRYABLE = {429, 500, 502, 503, 504}
 MAX_WAIT_S = 60.0
+# Groq 400 codes that mean "this sample was bad", not "this request was bad":
+# output_parse_failed (unparseable tool call), tool_use_failed (Groq validated the call
+# against the schema server-side and rejected it, e.g. k=20 over maximum 10).
+BAD_SAMPLE_CODES = {"output_parse_failed", "tool_use_failed"}
 RESAMPLE_TEMPERATURE = 0.7  # only used to retry an output_parse_failed reply
 
 
@@ -148,15 +152,15 @@ class OpenAICompatClient:
 
 
 def _is_parse_failure(r: httpx.Response) -> bool:
-    """Groq returns 400 output_parse_failed when the model's tool call is malformed.
-    It is a bad sample, not a bad request, so it is retried like a 5xx (no wait)."""
+    """Groq returns these 400s when the model's tool call is malformed. It is a bad
+    sample, not a bad request, so it is re-sampled (no wait)."""
     if r.status_code != 400:
         return False
     try:
         err = r.json().get("error")
     except (ValueError, AttributeError):
         return False
-    return isinstance(err, dict) and err.get("code") == "output_parse_failed"
+    return isinstance(err, dict) and err.get("code") in BAD_SAMPLE_CODES
 
 
 def _retry_after(r: httpx.Response, attempt: int) -> float:

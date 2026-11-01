@@ -118,3 +118,11 @@ def test_detector_catches_common_phrasings(text):
 )
 def test_detector_quiet_on_normal_text(text):
     assert detect_injection(text, frozenset({"post_issue_comment"})) == []
+
+
+def test_our_own_error_text_is_not_flagged(tmp_path):
+    # unknown-tool error lists every tool name incl. post_issue_comment (eval, u3)
+    gh = sandbox()
+    agent = build(tmp_path, gh, DenyAll(), [tool_reply(call("repo_browser.list_issues", {})), text_reply("ok")])
+    r = agent.run("List issues")
+    assert not [e for e in read_trace(r.trace_path) if e["event"] == "injection_flag"]

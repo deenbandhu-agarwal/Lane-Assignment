@@ -102,3 +102,10 @@ def test_output_parse_failed_gives_up_after_max_retries():
     with pytest.raises(ModelError, match="400"):
         c.complete([Message("user", "q")], [])
     assert len(seen) == 3
+
+
+def test_tool_use_failed_is_resampled_too():
+    # Groq validated k=20 against maximum 10 server-side and returned 400 (eval, u3)
+    bad = httpx.Response(400, json={"error": {"code": "tool_use_failed"}})
+    c, seen, _ = client([bad, ok({"content": "done"})])
+    assert c.complete([Message("user", "q")], []).text == "done" and len(seen) == 2
