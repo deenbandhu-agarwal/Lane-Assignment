@@ -5,7 +5,7 @@ not from this code: step1 wal/000001.log and step3a wal/000002.log.
 """
 
 from tsdb.model import Point, Tombstone
-from tsdb.wal.record import DecodedRecord, encode_delete, encode_put, frame, scan
+from tsdb.wal.record import DecodedRecord, ScanResult, encode_delete, encode_put, frame, scan
 
 T_10_00 = 1_730_368_800_000
 T_10_01 = 1_730_368_860_000
@@ -47,3 +47,38 @@ def test_a_delete_over_several_series_keeps_every_id_in_order():
 
     assert len(payload) == 1 + 8 + 8 + 8 + 4 + 3 * 4
     assert scan(frame(payload)).records[0].entry == delete
+
+
+# Example step 1 wal/000001.log: 4 PUTs of 37 bytes at offsets 0, 37, 74, 111 (148 bytes)
+STEP1_WAL = bytes.fromhex(
+    "1d00000033674b2101010000000000000001000000008504e2920100009a99999999193e40"
+    "1d000000b1e0da4f01020000000000000002000000008504e2920100000000000000003c40"
+    "1d000000d09d18d801030000000000000003000000008504e29201000000000000004040"
+    "40"
+    "1d0000000cc42b7c01040000000000000001000000606f05e2920100006666666666663e40")
+
+
+def test_the_whole_example_file_scans_to_four_records_with_a_clean_end():
+    result = scan(STEP1_WAL)
+
+    assert [r.offset for r in result.records] == [0, 37, 74, 111]
+    assert [r.entry.seq for r in result.records] == [1, 2, 3, 4]
+    assert (result.valid_length, result.stopped_reason) == (148, None)
+
+
+def test_a_record_cut_inside_its_header_is_dropped_and_the_file_is_valid_up_to_it():
+    result = scan(STEP1_WAL[:111 + 5])          # crash wrote only 5 of the 8 header bytes
+
+    assert [r.entry.seq for r in result.records] == [1, 2, 3]
+    assert (result.valid_length, result.stopped_reason) == (111, "cut record")
+
+
+def test_a_record_cut_inside_its_payload_is_dropped_and_the_file_is_valid_up_to_it():
+    result = scan(STEP1_WAL[:111 + 20])         # header complete, payload cut short
+
+    assert [r.entry.seq for r in result.records] == [1, 2, 3]
+    assert (result.valid_length, result.stopped_reason) == (111, "cut record")
+
+
+def test_an_empty_file_has_no_records_and_a_clean_end():
+    assert scan(b"") == ScanResult(records=[], valid_length=0, stopped_reason=None)

@@ -58,8 +58,9 @@ def frame(payload: bytes) -> bytes:
 
 def scan(data: bytes) -> ScanResult:
     """Decode records front to back; stop at the first cut or bad-checksum record."""
-    records = [DecodedRecord(offset, _decode(payload)) for offset, payload in iter_frames(data)]
-    return ScanResult(records, len(data), None)
+    frames, valid_length, reason = _walk(data)
+    return ScanResult([DecodedRecord(offset, _decode(payload)) for offset, payload in frames],
+                      valid_length, reason)
 
 
 def _decode(payload: bytes) -> Point | Tombstone:
@@ -73,9 +74,20 @@ def _decode(payload: bytes) -> Point | Tombstone:
 
 def iter_frames(data: bytes) -> Iterator[tuple[int, bytes]]:
     """Low-level: yield (offset, payload) for each valid frame. Shared with series.log."""
+    yield from _walk(data)[0]
+
+
+def _walk(data: bytes) -> tuple[list[tuple[int, bytes]], int, str | None]:
+    """(valid frames, bytes up to the last valid frame, why it stopped or None)."""
+    frames: list[tuple[int, bytes]] = []
     offset = 0
     while offset < len(data):
-        length, _ = _HEADER.unpack_from(data, offset)
         start = offset + _HEADER.size
-        yield offset, data[start:start + length]
+        if start > len(data):
+            return frames, offset, "cut record"
+        length, _ = _HEADER.unpack_from(data, offset)
+        if start + length > len(data):
+            return frames, offset, "cut record"
+        frames.append((offset, data[start:start + length]))
         offset = start + length
+    return frames, offset, None
