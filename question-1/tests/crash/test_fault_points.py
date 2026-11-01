@@ -1,25 +1,46 @@
-"""Scaffold: each test states the property it must prove."""
+"""Crash at each of the 5 dangerous moments (SIGKILL from inside, TSDB_CRASH_AT), restart, check.
+
+Each case proves: the crash point was really reached (exit by SIGKILL); after restart every
+confirmed write and delete holds, the in-flight request is all-or-nothing per point, nothing else
+appears; recovery leaves no .tmp or unlisted table; the restarted server takes new writes.
+"""
 
 import pytest
 
-pytestmark = [pytest.mark.crash, pytest.mark.skip(reason="scaffold: not implemented")]
+from tests.crash.harness import Client, Model, Server, check, check_files, read_all, workload
+
+pytestmark = pytest.mark.crash
+
+CITIES = ["Delhi", "Mumbai", "Pune", "Chennai"]
+
+CASES = [                                 # (crash point, which hit): late enough that tables exist
+    ("wal_append", 60),                   # bytes appended, fsync not done
+    ("memtable_flush", 3),                # memtable frozen, no table yet
+    ("sstable_write", 4),                 # half a .tmp table on disk
+    ("manifest_update", 4),               # MANIFEST.tmp written, not renamed
+    ("compaction_swap", 1),               # compaction output published, MANIFEST not switched
+]
 
 
-def test_crash_at_wal_append():
-    """TSDB_CRASH_AT=wal_append -> restart: acked writes present, files valid."""
+@pytest.mark.parametrize("wal_count", [1, 2])
+@pytest.mark.parametrize("crash_at,after", CASES, ids=[c for c, _ in CASES])
+def test_crash_point(tmp_path, crash_at, after, wal_count):
+    data = tmp_path / "data"
+    server = Server(data, wal_count, crash_at, after)
+    model = Model()
+    client = Client(server.url, model)
+    for op in workload(CITIES, steps=400, seed=7):
+        if not client.send(op):
+            break
+    assert server.killed_by_sigkill(), f"{crash_at} #{after} was never reached:\n{server.log.read_text()}"
 
-
-def test_crash_at_memtable_flush():
-    """TSDB_CRASH_AT=memtable_flush"""
-
-
-def test_crash_at_sstable_write():
-    """TSDB_CRASH_AT=sstable_write"""
-
-
-def test_crash_at_manifest_update():
-    """TSDB_CRASH_AT=manifest_update"""
-
-
-def test_crash_at_compaction_swap():
-    """TSDB_CRASH_AT=compaction_swap"""
+    again = Server(data, wal_count)
+    try:
+        check(read_all(again.url), model)
+        model.in_flight = []                                   # the restart decided; take what is there
+        model.confirmed = read_all(again.url)
+        assert Client(again.url, model).send(("write", [("Delhi", 1_730_368_800_000, 99.0)]))
+        check(read_all(again.url), model)
+    finally:
+        again.stop()
+    check_files(data)
