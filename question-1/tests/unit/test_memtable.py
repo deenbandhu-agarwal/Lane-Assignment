@@ -45,3 +45,9 @@ def test_a_snapshot_sees_the_newest_version_written_at_or_before_it(mem):
 def test_a_read_returns_only_its_series_and_time_range(mem):
     assert list(mem.read_series(2, T_10_01, T_10_01, snapshot_seq=10)) == [Point(2, T_10_01, 8, 28.2)]
     assert list(mem.read_series(4, T_10_00, T_10_02, snapshot_seq=10)) == []
+
+
+def test_a_delete_is_visible_only_to_snapshots_taken_after_it(mem):
+    assert mem.tombstones_for(3, snapshot_seq=9) == []
+    assert mem.tombstones_for(3, snapshot_seq=10) == [DELETE_MUMBAI]
+    assert mem.tombstones_for(1, snapshot_seq=10) == []

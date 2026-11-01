@@ -60,7 +60,7 @@ class Memtable:
             yield Point(sid, ts, -neg_seq, value)
 
     def tombstones_for(self, series_id: SeriesId, snapshot_seq: Seq) -> list[Tombstone]:
-        raise NotImplementedError
+        return [t for t in self._tombstones.get(series_id, ()) if t.seq <= snapshot_seq]
 
     def iter_for_flush(self) -> Iterator[Point]:
         """Newest version per (series, timestamp) only -> 'last write wins' happens here."""
