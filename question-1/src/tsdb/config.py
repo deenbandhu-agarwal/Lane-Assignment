@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 
@@ -44,5 +45,35 @@ class EngineConfig:
 
     @staticmethod
     def from_env() -> "EngineConfig":
-        """Build from TSDB_* environment variables (TSDB_DATA_DIR, TSDB_WAL_COUNT, ...)."""
-        raise NotImplementedError
+        """Every field can be set as TSDB_<FIELD NAME> (TSDB_DATA_DIR, TSDB_WAL_COUNT, ...);
+        tuples are comma separated. Unset fields keep their defaults; data_dir defaults to ./data."""
+        values: dict[str, object] = {"data_dir": Path("data")}
+        for f in fields(EngineConfig):
+            text = os.environ.get(f"TSDB_{f.name.upper()}")
+            if text is None:
+                continue
+            try:
+                values[f.name] = _parse(f.name, text)
+            except ValueError as e:
+                raise ValueError(f"TSDB_{f.name.upper()}={text!r}: {e}") from None
+        return EngineConfig(**values)
+
+
+_TYPES = {name: hint for name, hint in EngineConfig.__annotations__.items()}
+
+
+def _parse(name: str, text: str) -> object:
+    hint = _TYPES[name]
+    if hint == "Path":
+        return Path(text)
+    if hint == "bool":
+        if text.lower() not in ("1", "0", "true", "false"):
+            raise ValueError("use true or false")
+        return text.lower() in ("1", "true")
+    if hint.startswith("tuple"):
+        return tuple(int(part) for part in text.split(","))
+    if hint.startswith("int"):
+        return None if hint.endswith("None") and text == "" else int(text)
+    if hint == "float":
+        return float(text)
+    return text
