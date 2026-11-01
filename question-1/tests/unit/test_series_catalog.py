@@ -57,3 +57,26 @@ def test_a_record_cut_by_a_crash_is_dropped_and_the_file_is_repaired_for_new_rec
 
     third = catalog(tmp_path)                                   # the cut bytes must not hide the new record
     assert (third.key_of(1), third.key_of(2)) == (DELHI, MUMBAI)
+
+
+def test_threads_creating_the_same_keys_at_once_get_one_id_per_key_with_no_gaps(tmp_path):
+    c = catalog(tmp_path)
+    keys = [SeriesKey.of("cpu", {"host": f"h{i}"}) for i in range(1_000)]
+    results = [dict() for _ in range(8)]
+    go = threading.Barrier(8)
+
+    def worker(out):
+        go.wait()
+        for k in keys:
+            out[k] = c.get_or_create(k)[0]
+
+    threads = [threading.Thread(target=worker, args=(r,)) for r in results]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert all(r == results[0] for r in results)                # every thread saw the same id per key
+    assert sorted(results[0].values()) == list(range(1, 1_001))  # no duplicates, no gaps
+    c.sync()
+    assert {catalog(tmp_path).key_of(i) for i in range(1, 1_001)} == set(keys)   # file agrees
