@@ -44,7 +44,7 @@ POST /write
 | Case | Response |
 |---|---|
 | All valid | `200 {"written": N}` — only after WAL durability rule is met |
-| Any point invalid | `400 {"error": ..., "index": i}` — **whole batch rejected** (atomic) ⚑ |
+| Any point invalid | `400 {"error": ..., "detail": {"index": i}}` — **whole batch rejected** (atomic) ⚑ |
 | Same series + ts written twice | Accepted; **last write wins** (higher sequence number) |
 | Empty batch | `400` ⚑ |
 
@@ -91,7 +91,7 @@ Results are **per series** (no cross-series rollup — that's a "cut" ⚑).
 | Q9 | filter matches nothing / unknown metric | `200 {"series": []}` |
 | Q10 | `count` on a range with overwrites | counts unique timestamps, not raw writes |
 
-Errors (`400`): missing `metric`/`from`/`to`; `from > to`; bad filter syntax (with position); unknown `agg`; bad `bucket`; `agg` without `bucket` (if we choose to require it) ⚑. Result-size guard: max points/buckets per response → `400`/`413` ⚑.
+Error body is always `{"error": text, "detail": {...}}` (`detail` only when there is something to point at: `index` of a bad point, `position` in a filter). Errors (`400`): missing `metric`/`from`/`to`; `from > to`; bad filter syntax (with position); unknown `agg`; bad `bucket`; `agg` without `bucket` (if we choose to require it) ⚑. Result-size guard: max points/buckets per response → `400`/`413` ⚑.
 
 ---
 
