@@ -87,3 +87,38 @@ def test_k1_a_tombstone_stays_while_a_table_outside_the_job_may_still_hold_hidde
 
     out = next(t for _, tables in shard.versions.current().windows for t in tables if t.name == "000004.sst")
     assert out.all_tombstones() == [DELETE_MUMBAI]               # still needed to hide (3, 10:00:05, seq 5)
+
+
+def sst_files(tmp_path):
+    return sorted(p.name for p in (tmp_path / "sst").rglob("*.sst"))
+
+
+def test_k2_after_a_successful_swap_only_the_output_is_live_and_the_inputs_are_deleted(tmp_path):
+    shard = Shard(tmp_path, [(A_POINTS, []), (B_POINTS, [DELETE_MUMBAI])])
+
+    shard.compactor.run(shard.job(*shard.readers))
+
+    assert shard.manifest.load().windows == ((W_10_00, ("000003.sst",)),)
+    assert sst_files(tmp_path) == ["000003.sst"]
+
+
+def test_k2_a_running_query_keeps_the_inputs_until_it_ends(tmp_path):
+    shard = Shard(tmp_path, [(A_POINTS, []), (B_POINTS, [DELETE_MUMBAI])])
+    query = shard.versions.acquire(seq=12)
+
+    shard.compactor.run(shard.job(*shard.readers))
+
+    assert sst_files(tmp_path) == ["000001.sst", "000002.sst", "000003.sst"]
+    shard.versions.release(query)
+    assert sst_files(tmp_path) == ["000003.sst"]
+
+
+def test_k2_a_crash_at_the_swap_leaves_all_inputs_live_and_the_output_unlisted(tmp_path):
+    shard = Shard(tmp_path, [(A_POINTS, []), (B_POINTS, [DELETE_MUMBAI])], faults=StopAt("compaction_swap"))
+
+    with pytest.raises(SystemExit):
+        shard.compactor.run(shard.job(*shard.readers))
+
+    assert shard.manifest.load().windows == ((W_10_00, ("000001.sst", "000002.sst")),)   # never both
+    assert [t.name for _, ts in shard.versions.current().windows for t in ts] == ["000002.sst", "000001.sst"]
+    assert sst_files(tmp_path) == ["000001.sst", "000002.sst", "000003.sst"]   # 000003 = orphan for recovery
