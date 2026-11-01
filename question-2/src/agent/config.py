@@ -36,6 +36,7 @@ class Settings:
     retrieval_mode: str
     embed_model: str
     seed: int
+    model_rpm: float
     corpus_dir: Path
     cache_dir: Path
     trace_dir: Path
@@ -59,6 +60,7 @@ class Settings:
             retrieval_mode=e("RETRIEVAL_MODE", "hybrid"),
             embed_model=e("EMBED_MODEL", "BAAI/bge-small-en-v1.5"),
             seed=int(e("SEED", "42")),
+            model_rpm=float(e("MODEL_RPM", "0")),
             corpus_dir=Path(e("CORPUS_DIR", str(ROOT / "corpus"))),
             cache_dir=Path(e("CACHE_DIR", str(ROOT / ".cache"))),
             trace_dir=Path(e("TRACE_DIR", str(ROOT / "traces"))),

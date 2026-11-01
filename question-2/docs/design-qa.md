@@ -95,3 +95,11 @@ Legend. **Outcome:** `decision` (changed the design) · `clarified` (no design c
 ### 19. Why does injection detection only look for the write tool's name?
 - **Answer:** Looking for every tool name flagged normal output (the `echo` test tool returns a key named `echo`). Only a mention of the write tool inside data is suspicious.
 - **Outcome:** decision.
+
+### 20. What are the Gemini free-tier limits, and how does the client cope?
+- **Answer:** A real run hit `429 ... generate_content_free_tier_requests, limit: 5, model: gemini-3.6-flash`: the free tier allows **5 requests per minute**, and `gemini-3.5-flash` is counted against `gemini-3.6-flash`'s quota. The public rate-limits page publishes no per-model numbers (only visible in AI Studio), so the daily limit is unknown. The client now paces itself (`MODEL_RPM=5`, 12 s between calls) and on 429 waits the server's suggested delay instead of a fixed backoff.
+- **Outcome:** decision. A 25-question eval at ~4 calls per question takes ~20 minutes per run on the free tier; the daily limit may block running it several times (3 retrieval modes).
+
+### 21. Why is gemini-3.5-flash priced at $0.75 / $3.75 per 1M tokens?
+- **Answer:** It is not on the pricing page. The 429 shows it is served as gemini-3.6-flash, whose listed standard paid price is $0.75 input / $3.75 output (thinking tokens billed as output), valid through 2026-12-31.
+- **Outcome:** decision. Free tier spends $0; the cap uses the paid price so it stays meaningful.

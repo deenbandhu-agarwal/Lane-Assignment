@@ -107,7 +107,7 @@ def main() -> None:
 
     for issue in ISSUES:
         if issue["state"] == "closed":
-            gh.call("PATCH", f"/issues/{issue['number']}", json={"state": "closed"})
+            gh.call("PATCH", f"/issues/{issue['number']}", ok=(200, 422), json={"state": "closed"})  # 422: merge already closed it
     print("done")
 
 

@@ -21,7 +21,9 @@ def build_model(s: Settings) -> ModelClient:
     if s.model_provider == "gemini":
         from agent.models.gemini import GeminiClient
 
-        return GeminiClient(s.gemini_api_key, s.model_name, seed=s.seed, timeout_s=s.step_timeout_s)
+        return GeminiClient(
+            s.gemini_api_key, s.model_name, seed=s.seed, timeout_s=s.step_timeout_s, rpm=s.model_rpm
+        )
     raise ValueError(f"unknown MODEL_PROVIDER {s.model_provider!r} (supported: gemini)")
 
 

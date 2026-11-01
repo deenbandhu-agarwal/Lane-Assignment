@@ -139,3 +139,39 @@ def test_client_errors_are_not_retried():
     with pytest.raises(ModelError, match="400"):
         c.complete([Message("user", "q")], [])
     assert sleeps == []
+
+
+def test_rate_limit_waits_the_server_suggested_delay():
+    e = errors.APIError(429, {"error": {"code": 429, "message": "Quota exceeded. Please retry in 25.8s.", "status": "RESOURCE_EXHAUSTED"}})
+    c, sleeps = client([e, response(types.Part(text="ok"))])
+    c.complete([Message("user", "q")], [])
+    assert sleeps == [pytest.approx(26.8)]
+
+
+def test_retry_info_detail_wins():
+    e = errors.APIError(
+        429,
+        {"error": {"code": 429, "message": "x", "status": "S",
+                   "details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "12s"}]}},
+    )
+    c, sleeps = client([e, response(types.Part(text="ok"))])
+    c.complete([Message("user", "q")], [])
+    assert sleeps == [13.0]
+
+
+def test_client_side_pacing_spaces_calls():
+    now = [100.0]
+    sleeps: list[float] = []
+
+    def sleep(s):
+        sleeps.append(s)
+        now[0] += s
+
+    c = GeminiClient(
+        "", "gemini-3.5-flash", rpm=5, sleep=sleep, clock=lambda: now[0],
+        client=StubClient([response(types.Part(text="a")), response(types.Part(text="b"))]),
+    )
+    c.complete([Message("user", "q")], [])
+    now[0] += 2.0  # next call 2 s later
+    c.complete([Message("user", "q")], [])
+    assert sleeps == [pytest.approx(10.0)]  # 60/5 = 12 s spacing
