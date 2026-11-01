@@ -5,11 +5,13 @@
   is replaced with the not-found message: it can only be invented.
 - If there was evidence but some citations are unsupported, a warning is appended.
 Recognised citation forms: [file.md#3], [issue#12], [pr#7]; several may share brackets.
+Text is normalised first (see normalize) so models that emit 【】 or no-break spaces still parse.
 """
 
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,9 +21,18 @@ _BRACKET = re.compile(r"\[([^\[\]]+)\]")
 _ID = re.compile(r"^(?:[\w.-]+\.(?:md|txt)#\d+|issue#\d+|pr#\d+)$")
 
 
+_DASHES = dict.fromkeys(map(ord, "\u2010\u2011\u2012\u2013\u2014\u2212"), "-")
+_BRACKETS = {ord("\u3010"): "[", ord("\u3011"): "]"}  # 【 】, used by some models
+
+
+def normalize(text: str) -> str:
+    """NFKC (no-break spaces -> space), unicode dashes -> '-', lenticular brackets -> []."""
+    return unicodedata.normalize("NFKC", text).translate(_DASHES).translate(_BRACKETS)
+
+
 def cited_ids(answer: str) -> set[str]:
     out = set()
-    for group in _BRACKET.findall(answer):
+    for group in _BRACKET.findall(normalize(answer)):
         for part in re.split(r"[,;]", group):
             token = part.strip().lower().replace(" ", "")
             if _ID.match(token):

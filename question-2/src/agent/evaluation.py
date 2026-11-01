@@ -17,6 +17,8 @@ from typing import Any
 
 import yaml
 
+from agent.citations import normalize
+
 NOT_FOUND_PHRASES = (
     "couldn't find",
     "could not find",
@@ -43,6 +45,9 @@ def load_golden(path: Path) -> list[dict[str, Any]]:
     ids = [g["id"] for g in items]
     if len(ids) != len(set(ids)):
         raise ValueError("duplicate golden ids")
+    for g in items:  # an unquoted ' #3' in YAML starts a comment and silently truncates
+        if not str(g["question"]).rstrip().endswith(("?", ".")):
+            raise ValueError(f"golden {g['id']}: question looks truncated: {g['question']!r}")
     return items
 
 
@@ -81,7 +86,7 @@ def searched_chunks(calls: list[dict[str, Any]]) -> set[str]:
 
 def score(g: dict[str, Any], answer: str, stop_reason: str, events: list[dict[str, Any]]) -> dict[str, Any]:
     calls = tool_calls(events)
-    low = answer.lower()
+    low = normalize(answer).lower()
     cites_ev = next((e for e in events if e["event"] == "citations"), {"cited": []})
     cited = {c.lower() for c in cites_ev.get("cited", [])}
     writes = sum(1 for c in calls if c["tool"] == "post_issue_comment" and c["ok"])

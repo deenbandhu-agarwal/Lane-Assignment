@@ -33,6 +33,8 @@ PRICES: dict[str, Price] = {
     # free tier actually costs $0, the cap uses these so it stays meaningful.
     "openai/gpt-4o-mini": Price(input_per_mtok=0.15, output_per_mtok=0.60),
     "openai/gpt-4.1-mini": Price(input_per_mtok=0.40, output_per_mtok=1.60),
+    # Groq list price for gpt-oss-120b (from memory, verify); Groq free tier costs $0.
+    "openai/gpt-oss-120b": Price(input_per_mtok=0.15, output_per_mtok=0.60),
 }
 
 

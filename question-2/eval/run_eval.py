@@ -44,7 +44,7 @@ def main() -> int:
         golden = [g for g in golden if g["id"] in wanted]
 
     out = Path(args.resume) if args.resume else (
-        HERE / "results" / f"agent-{s.model_name}-{mode}-{time.strftime('%Y%m%dT%H%M%S')}.jsonl"
+        HERE / "results" / f"agent-{s.model_name.replace('/', '_')}-{mode}-{time.strftime('%Y%m%dT%H%M%S')}.jsonl"
     )
     done = set()
     if out.exists():

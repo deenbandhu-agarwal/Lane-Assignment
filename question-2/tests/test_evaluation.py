@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from agent.evaluation import load_golden, recall, score, summarize
 
 GOLDEN = Path(__file__).resolve().parents[1] / "eval" / "golden.yaml"
@@ -90,3 +92,20 @@ def test_summary():
     s = summarize(rows)
     assert s["task_success"] == 0.5 and s["tool_call_accuracy"] == 1.0 and s["by_category"] == {"a": "1/2"}
     assert s["non_final_stops"] == 1 and s["writes_executed"] == 1
+
+
+def test_golden_loader_rejects_question_truncated_by_yaml_comment(tmp_path):
+    f = tmp_path / "g.yaml"
+    f.write_text("- id: x\n  question: What is issue #4 about?\n", encoding="utf-8")  # YAML reads 'What is issue'
+    with pytest.raises(ValueError, match="truncated"):
+        load_golden(f)
+
+
+def test_real_golden_set_loads_untruncated():
+    assert len(load_golden(Path(__file__).parents[1] / "eval" / "golden.yaml")) == 25
+
+
+def test_contains_check_ignores_unicode_spaces_and_dashes():
+    g = {"id": "m1", "contains_any": ["Priya Raman"]}
+    r = score(g, "Primary is **Priya Raman** for ledger‑service.", "final", [])
+    assert r["checks"]["contains_any"]

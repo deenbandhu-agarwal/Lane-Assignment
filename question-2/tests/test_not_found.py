@@ -69,3 +69,10 @@ def test_partly_unsupported_answer_gets_a_warning():
 def test_citation_parsing():
     text = "See [issue#3, error-codes.md#2] and [PR#7]; not a cite: [link], [x]."
     assert cited_ids(text) == {"issue#3", "error-codes.md#2", "pr#7"}
+
+
+def test_lenticular_brackets_and_nbsp_are_recognised_as_citations():
+    from agent.citations import cited_ids
+
+    assert cited_ids("Index lock【incident-2025-09-postmortem.md#2】") == {"incident-2025-09-postmortem.md#2"}
+    assert cited_ids("see [issue#3, pr#9]") == {"issue#3", "pr#9"}
