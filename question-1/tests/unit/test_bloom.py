@@ -16,3 +16,13 @@ def test_sizing_for_10k_ids_at_1_percent():
 def test_sizing_for_the_three_ids_in_the_example_file():
     # m = ceil(28.76) = 29 -> 32 ; k = round(32 / 3 * ln 2) = round(7.39) = 7
     assert BloomFilter.optimal_params(3, 0.01) == (32, 7)
+
+
+def test_every_added_id_is_reported_as_maybe_present():
+    bloom = BloomFilter(*BloomFilter.optimal_params(10_000, 0.01))
+    ids = range(1, 10_001)
+
+    for i in ids:
+        bloom.add(i)
+
+    assert all(bloom.may_contain(i) for i in ids)
