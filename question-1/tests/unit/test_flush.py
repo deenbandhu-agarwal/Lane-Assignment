@@ -113,3 +113,32 @@ def test_a_second_flush_adds_to_the_windows_already_there(tmp_path):
     assert window == W_10_00
     assert [t.name for t in tables] == ["000002.sst", "000001.sst"]       # newest first
     assert shard.manifest.load().windows == ((W_10_00, ("000001.sst", "000002.sst")),)
+
+
+class StopAt:
+    """Fake fault injector: raises at one crash point, like the process dying there."""
+
+    def __init__(self, point):
+        self.point = point
+
+    def hit(self, point):
+        if point == self.point:
+            raise SystemExit(f"crash at {point}")
+
+
+@pytest.mark.parametrize("point, leftover", [
+    ("sstable_write", "000001.sst.tmp"),          # half-written file, never published
+    ("manifest_update", "000001.sst"),            # published file, but the MANIFEST never named it
+])
+def test_a_crash_during_flush_leaves_the_old_state_and_keeps_the_wal(tmp_path, point, leftover):
+    shard = Shard(tmp_path, faults=StopAt(point))
+    shard.active.apply(STEP1)
+    frozen = shard.flusher.swap_memtable()
+
+    with pytest.raises(SystemExit):
+        shard.flusher.flush(frozen)
+
+    assert shard.manifest.load() is None                         # nothing committed: no new live file
+    assert shard.layout.wal_segment(0, 1).exists()               # the data is still in the WAL
+    assert shard.versions.current().immutables == (frozen,)      # readers still use the memtable
+    assert (tmp_path / "sst" / "60000" / str(T_10_00) / leftover).exists()   # orphan for recovery to delete
