@@ -20,6 +20,7 @@ from typing import TypeVar
 from agent.budget import Budget, Limits
 from agent.models.base import ModelClient
 from agent.models.pricing import Price
+from agent.safety import detect_injection, wrap_data
 from agent.tools.registry import ToolRegistry, ToolResult
 from agent.trace import Tracer
 from agent.types import Message, ToolCall
@@ -116,6 +117,7 @@ class Agent:
         messages += [*history, Message("user", user_input)]
         budget = Budget(self.limits, self.price)
         specs = self.tools.specs()
+        write_tools = self.tools.write_tool_names()
         seen: Counter[tuple[str, str]] = Counter()
         malformed_streak = 0
         step = 0
@@ -196,8 +198,16 @@ class Agent:
                         latency_ms=round((time.perf_counter() - t1) * 1000, 1),
                     )
                     all_malformed &= result.malformed
+                    flags = detect_injection(result.content, write_tools)
+                    if flags:
+                        tracer.event("injection_flag", step=step, tool=call.name, flags=flags)
                     messages.append(
-                        Message("tool", result.content, tool_call_id=call.id, tool_name=call.name)
+                        Message(
+                            "tool",
+                            wrap_data(call.name, result.content, flags),
+                            tool_call_id=call.id,
+                            tool_name=call.name,
+                        )
                     )
 
                 malformed_streak = malformed_streak + 1 if all_malformed else 0

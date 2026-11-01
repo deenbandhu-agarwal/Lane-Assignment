@@ -83,6 +83,9 @@ class ToolRegistry:
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
 
+    def write_tool_names(self) -> frozenset[str]:
+        return frozenset(n for n, t in self._tools.items() if t.writes)
+
     def specs(self) -> list[ToolSpec]:
         return [t.spec() for t in self._tools.values()]
 
