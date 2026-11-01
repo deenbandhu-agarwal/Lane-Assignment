@@ -22,3 +22,28 @@ def test_a_put_encodes_to_the_37_bytes_on_the_example_page_and_scans_back():
 
     assert data == PUT_SEQ1
     assert scan(data).records == [DecodedRecord(offset=0, entry=point)]
+
+
+# DELETE seq 10, series [3], 10:00:00 .. 10:01:00
+#   length 33 | crc32 | type 2 | seq | from | to | count 1 | id 3
+DELETE_SEQ10 = bytes.fromhex(
+    "21000000" "8262f3d9" "02" "0a00000000000000" "008504e292010000" "606f05e292010000"
+    "01000000" "03000000")
+
+
+def test_a_delete_encodes_to_the_41_bytes_on_the_example_page_and_scans_back():
+    delete = Tombstone(seq=10, series_ids=(3,), from_ts=T_10_00, to_ts=T_10_01)
+
+    data = frame(encode_delete(delete))
+
+    assert data == DELETE_SEQ10
+    assert scan(data).records == [DecodedRecord(offset=0, entry=delete)]
+
+
+def test_a_delete_over_several_series_keeps_every_id_in_order():
+    delete = Tombstone(seq=11, series_ids=(2, 5, 9), from_ts=T_10_00, to_ts=T_10_01)
+
+    payload = encode_delete(delete)
+
+    assert len(payload) == 1 + 8 + 8 + 8 + 4 + 3 * 4
+    assert scan(frame(payload)).records[0].entry == delete

@@ -21,6 +21,7 @@ from tsdb.model import Point, Tombstone
 
 _HEADER = struct.Struct("<II")       # length, crc32
 _PUT = struct.Struct("<BQIqd")        # type, seq, series_id, timestamp, value  (29 bytes)
+_DELETE = struct.Struct("<BQqqI")     # type, seq, from, to, count; then count x u32 series ids
 
 
 class RecordType(IntEnum):
@@ -46,7 +47,9 @@ def encode_put(point: Point) -> bytes:
 
 
 def encode_delete(tombstone: Tombstone) -> bytes:
-    raise NotImplementedError
+    ids = tombstone.series_ids
+    return (_DELETE.pack(RecordType.DELETE, tombstone.seq, tombstone.from_ts, tombstone.to_ts, len(ids))
+            + struct.pack(f"<{len(ids)}I", *ids))
 
 
 def frame(payload: bytes) -> bytes:
@@ -60,6 +63,10 @@ def scan(data: bytes) -> ScanResult:
 
 
 def _decode(payload: bytes) -> Point | Tombstone:
+    if payload[0] == RecordType.DELETE:
+        _, seq, from_ts, to_ts, count = _DELETE.unpack_from(payload)
+        ids = struct.unpack_from(f"<{count}I", payload, _DELETE.size)
+        return Tombstone(seq, ids, from_ts, to_ts)
     _, seq, series_id, timestamp, value = _PUT.unpack(payload)
     return Point(series_id, timestamp, seq, value)
 
