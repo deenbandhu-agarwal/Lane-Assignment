@@ -52,18 +52,48 @@ class VersionSet:
     def __init__(self, initial: Version, on_obsolete: OnObsolete) -> None:
         self._current = initial
         self._on_obsolete = on_obsolete
-        self._refs: dict[int, int] = {}
+        self._refs: dict[int, int] = {}                  # version number -> running snapshots
+        self._live: dict[int, Version] = {initial.number: initial}   # current + versions in use
         self._lock = threading.Lock()
 
     def acquire(self, seq: Seq) -> Snapshot:
-        raise NotImplementedError
+        with self._lock:
+            version = self._current
+            self._refs[version.number] = self._refs.get(version.number, 0) + 1
+            return Snapshot(version, seq)
 
     def release(self, snapshot: Snapshot) -> None:
-        raise NotImplementedError
+        number = snapshot.version.number
+        with self._lock:
+            self._refs[number] -= 1
+            if self._refs[number] > 0:
+                return
+            del self._refs[number]
+            obsolete = self._drop(number)
+        self._delete(obsolete)
 
     def current(self) -> Version:
-        raise NotImplementedError
+        with self._lock:
+            return self._current
 
     def install(self, new: Version) -> None:
         """Called AFTER the MANIFEST commit that made `new` durable."""
-        raise NotImplementedError
+        with self._lock:
+            old = self._current
+            self._current = new
+            self._live[new.number] = new
+            obsolete = self._drop(old.number) if old.number not in self._refs else []
+        self._delete(obsolete)
+
+    def _drop(self, number: int) -> list[TableReader]:
+        """Forget a version nobody uses; return its tables that no live version still has.
+        Caller holds the lock."""
+        if number == self._current.number:
+            return []
+        gone = self._live.pop(number)
+        still_used = {t.name for v in self._live.values() for _, tables in v.windows for t in tables}
+        return [t for _, tables in gone.windows for t in tables if t.name not in still_used]
+
+    def _delete(self, tables: list[TableReader]) -> None:
+        for table in tables:                 # outside the lock: closing/deleting files is slow
+            self._on_obsolete(table)
