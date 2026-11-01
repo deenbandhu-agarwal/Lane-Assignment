@@ -20,7 +20,7 @@ class SeriesKey:
     @staticmethod
     def of(metric: str, tags: dict[str, str]) -> "SeriesKey":
         """Normalise: sort tags by key."""
-        raise NotImplementedError
+        return SeriesKey(metric, tuple(sorted(tags.items())))
 
     def canonical(self) -> str:
         """'temperature{city=Delhi,sensor=roof}' — stored in series.log, hashed for WAL routing."""
