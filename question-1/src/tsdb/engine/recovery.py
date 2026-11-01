@@ -17,6 +17,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from tsdb.errors import StartupError
 from tsdb.model import ManifestState, TimeWindow
 from tsdb.storage.layout import ShardLayout
 from tsdb.ports import FileOps, ManifestPort, MemtableFactory, MemtablePort, SeriesResolver, TableFactory, TableReader
@@ -51,6 +52,11 @@ class Recovery:
     def run(self) -> RecoveredState:
         state = self._manifest.load() or ManifestState(version=0, next_file_no=1, last_flushed_seq=0,
                                                        wal_count=self._wal_count, wal_segment=1)
+        if state.wal_count != self._wal_count:
+            raise StartupError(
+                f"config wal_count={self._wal_count} but the data was written with wal_count={state.wal_count}: "
+                "series would be routed to the wrong WAL. Start with wal_count="
+                f"{state.wal_count} (changing it needs a migration, not supported).")
         self._series.load()
         removed = self._remove_flushed_segments(state.wal_segment) + self._remove_orphans(state)
         windows = tuple((w, tuple(self._tables.open_reader(self._layout.sstable(w, int(n[:6])), w)

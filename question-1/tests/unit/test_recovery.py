@@ -5,6 +5,7 @@ import random
 import pytest
 
 from tsdb.engine.recovery import Recovery
+from tsdb.errors import StartupError
 from tsdb.faults import NoFaults
 from tsdb.memtable.memtable import Memtable
 from tsdb.memtable.skiplist import SkipList
@@ -119,3 +120,11 @@ def test_r4_half_written_and_never_listed_files_are_deleted_and_listed_files_kep
     assert live.exists()
     assert not unlisted.exists() and not half.exists() and not manifest_tmp.exists()
     assert sorted(p.name for p in state.removed_orphans) == ["000002.sst", "000003.sst.tmp", "MANIFEST.tmp"]
+
+
+def test_r5_a_different_wal_count_than_the_manifest_refuses_to_start(tmp_path):
+    d = Dir(tmp_path)
+    d.manifest.commit(ManifestState(version=1, next_file_no=1, last_flushed_seq=0, wal_count=1, wal_segment=1))
+
+    with pytest.raises(StartupError, match="wal_count"):
+        d.recover(wal_count=4)

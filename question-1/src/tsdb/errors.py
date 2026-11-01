@@ -28,3 +28,7 @@ class CorruptFileError(TsdbError):
 class FatalStorageError(TsdbError):
     """fsync / write failed after the WAL may be partly written.
     Policy: stop the process; recovery replays the WAL (see wal/writer.py)."""
+
+
+class StartupError(TsdbError):
+    """The data directory cannot be opened safely with this configuration (e.g. wal_count changed)."""
