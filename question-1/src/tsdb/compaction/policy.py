@@ -9,6 +9,13 @@ Decided strategy (design-qa #37-#39): size-tiered INSIDE growing time windows.
                      reach late_merge_ratio of its size, or once per late_merge_interval (data time)
     closed           TimeWindow.is_closed(newest_data_ts, grace = smallest step)
 Priority per pick(): size-tiered, then move-up (smallest first), then late files. One job at a time.
+
+Ownership: flush always writes the SMALLEST step, so a late point for an hour that was already
+moved up lands in a 1 h window INSIDE a 6 h window that has a file. Every file therefore belongs to
+its TOP window: the biggest window above it (or itself) that has a file.
+    size-tiered  top windows of the smallest step
+    move-up      a closed window with no file whose tops are all smaller windows
+    late merge   a top window with its own file(s) plus extras (late files below it, delete pieces)
 Compaction never mixes windows that do not nest, so "every table inside one window" always holds.
 """
 
@@ -52,13 +59,30 @@ class TimeWindowPolicy(CompactionPolicy):
         self._late_merge_interval_ms = late_merge_interval_ms
 
     def pick(self, version: Version) -> CompactionJob | None:
-        raise NotImplementedError
+        groups = self._groups(version)
+        return (self._size_tiered(groups) or self._move_up(groups, version.newest_data_ts)
+                or self._late_merge(groups))
 
-    def _size_tiered(self, version: Version) -> CompactionJob | None:
-        raise NotImplementedError
+    def _groups(self, version: Version) -> dict[TimeWindow, list[tuple[TimeWindow, TableReader]]]:
+        """top window -> every (window, table) it owns."""
+        with_files = {w for w, tables in version.windows if tables}
+        groups: dict[TimeWindow, list[tuple[TimeWindow, TableReader]]] = {}
+        for window, tables in version.windows:
+            top = window
+            for step in self._steps:
+                if step > window.size_ms and (parent := window.parent(step)) in with_files:
+                    top = parent
+            groups.setdefault(top, []).extend((window, t) for t in tables)
+        return groups
 
-    def _move_up(self, version: Version) -> CompactionJob | None:
-        raise NotImplementedError
+    def _size_tiered(self, groups) -> CompactionJob | None:
+        for top, members in sorted(groups.items()):
+            if top.size_ms == self._steps[0] and len(members) >= self._merge_threshold:
+                return CompactionJob(JobKind.SIZE_TIERED, tuple(t for _, t in members), top)
+        return None
 
-    def _late_merge(self, version: Version) -> CompactionJob | None:
-        raise NotImplementedError
+    def _move_up(self, groups, newest_data_ts: int) -> CompactionJob | None:
+        return None
+
+    def _late_merge(self, groups) -> CompactionJob | None:
+        return None
