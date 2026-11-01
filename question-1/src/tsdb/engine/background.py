@@ -52,7 +52,15 @@ class BackgroundWorker:
     def wait_for_room(self) -> None:
         """Writers call this before submitting: blocks while the active memtable is full AND
         max_immutable_memtables are already waiting for flush."""
-        raise NotImplementedError
+        with self._room:
+            while True:
+                version = self._versions.current()
+                if not version.active.is_full():
+                    return
+                self._flush_wake.set()                     # full: make sure the flush thread knows
+                if len(version.immutables) < self._max_immutable:
+                    return                                 # the swap will make room right away
+                self._room.wait(timeout=_RECHECK_S)
 
     def run_until_idle(self) -> None:
         """Test/benchmark hook: flush everything, then compact until the policy returns None."""

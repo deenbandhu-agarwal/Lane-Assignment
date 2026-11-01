@@ -124,3 +124,99 @@ def test_b2_a_memtable_of_only_late_points_is_flushed_when_flushed_data_is_alrea
     roomy.write(Point(2, T, 3, 9.9))                       # late point for 10:00; memtable's own newest = 10:00
 
     assert eventually(lambda: len(roomy.files()) > len(before))
+
+
+class FakeMem:
+    def __init__(self, full=False):
+        self.full, self.max_seq, self.max_timestamp, self.min_timestamp = full, 1, 0, None
+
+    def is_full(self):
+        return self.full
+
+
+class FakeFlusher:
+    """swap: frozen -> immutables. flush: waits for `gate`, then the frozen memtable leaves."""
+
+    def __init__(self, versions):
+        self.versions, self.gate, self.flushed = versions, threading.Event(), 0
+
+    def swap_memtable(self):
+        v = self.versions.current()
+        self.versions.install(Version(v.number + 1, FakeMem(), (v.active, *v.immutables), v.windows, 0))
+        return v.active
+
+    def flush(self, frozen):
+        self.gate.wait()
+        v = self.versions.current()
+        self.versions.install(Version(v.number + 1, v.active, tuple(m for m in v.immutables if m is not frozen),
+                                      v.windows, 0))
+        self.flushed += 1
+
+
+class SlowCompactor:
+    def __init__(self):
+        self.gate, self.started = threading.Event(), threading.Event()
+
+    def run(self, job):
+        self.started.set()
+        self.gate.wait()
+
+
+class OneJobPolicy:
+    def __init__(self):
+        self.given = False
+
+    def pick(self, version):
+        if self.given:
+            return None
+        self.given = True
+        return "job"
+
+
+def fake_worker(compactor=None, policy=None):
+    versions = VersionSet(Version(0, FakeMem(full=True), (), (), 0), on_obsolete=lambda t: None)
+    flusher = FakeFlusher(versions)
+    worker = BackgroundWorker(versions, flusher, compactor or SlowCompactor(), policy or (lambda: None),
+                              max_immutable_memtables=1, smallest_window_ms=MINUTE)
+    if policy is None:
+        worker._policy = type("NoJobs", (), {"pick": lambda self, v: None})()
+    return versions, flusher, worker
+
+
+def test_b3_writers_wait_while_the_active_memtable_is_full_and_one_is_already_waiting_for_flush():
+    versions, flusher, worker = fake_worker()
+    worker.start()
+    worker.wake()
+    assert eventually(lambda: len(versions.current().immutables) == 1)   # flush started, stuck on the gate
+    versions.current().active.full = True                                 # the new one fills up too
+    room = threading.Event()
+    writer = threading.Thread(target=lambda: (worker.wait_for_room(), room.set()))
+    writer.start()
+
+    assert not room.wait(0.2)                                             # memory is bounded: writer waits
+    flusher.gate.set()                                                    # the flush finishes
+    assert room.wait(2)
+    writer.join()
+    worker.stop()
+
+
+def test_b3_a_writer_does_not_wait_when_there_is_room():
+    versions, flusher, worker = fake_worker()
+    versions.current().active.full = False
+
+    worker.wait_for_room()                                                # returns at once
+
+
+def test_b4_a_long_compaction_does_not_stop_a_flush():
+    compactor = SlowCompactor()
+    versions, flusher, worker = fake_worker(compactor, OneJobPolicy())
+    flusher.gate.set()
+    worker.start()
+    worker._compact_wake.set()
+    assert compactor.started.wait(1)                                      # compaction is running (blocked)
+
+    worker.wake()                                                         # active memtable is full
+
+    assert eventually(lambda: flusher.flushed == 1)                      # flushed while compaction runs
+    compactor.gate.set()
+    worker.stop()
