@@ -189,6 +189,10 @@ Legend — **Outcome:** `decision` (changed the design) · `clarified` (no desig
 - **Answer:** Yes, if names or values contain separators: tags `{a: "1,b=2"}` and `{a: "1", b: "2"}` both print as `m{a=1,b=2}` and would share one series id. Options: escape `\ , = { }` with a backslash, or reject those characters in the API (400).
 - **Outcome:** decision: **escape** (any string still accepted, text stays readable). Tested in `tests/unit/test_series_key.py`.
 
+### 43. Does Rule 2 need to check memtables before dropping a tombstone?
+- **Answer:** No. A tombstone inside an SSTable was flushed. Every entry in today's memtables was written after that flush, so its seq is bigger, and Rule 1 only hides points with a smaller seq. So no memtable can hold a point that this tombstone hides. This needs memtables to flush in order (the flush lock already does that). Rule 2 then is: drop a tombstone only if no live table outside the compaction job *may* hold one of its series in its time range (footer min/max + Bloom; a Bloom false positive only keeps it longer, never loses a delete). This covers late files in the same window and the bigger parent window's file.
+- **Outcome:** decision: memtable check removed from Rule 2. Tested in `tests/unit/test_rule2.py` (mutation check: a time-only check fails the "surely lacks the series" test).
+
 ### Tooling
 - A prototype dump tool (outside this repo) printed SSTable / WAL / series.log / MANIFEST files as text (`--hex` for raw bytes) and showed a cut WAL record as "replay stops here". The engine ships the same as `tsdb-dump` (`src/tsdb/tools/dump.py`).
 

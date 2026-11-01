@@ -64,3 +64,18 @@ def test_r2_kept_when_the_bigger_parent_window_file_still_holds_old_data():
     v = version((W_06_12, (BIG_WINDOW,)), (W_10, (A, B)))
 
     assert not tombstone_droppable(DELETE_MUMBAI, job(A, B), v)
+
+
+def test_r3_dropped_when_an_outside_file_overlaps_in_time_but_surely_lacks_the_series():
+    other_series_only = FakeTable("000005.sst", {1, 2}, T_10_00, T_10_00 + HOUR - 1)   # no series 3
+    v = version((W_10, (A, B, other_series_only)))
+
+    assert tombstone_droppable(DELETE_MUMBAI, job(A, B), v)
+
+
+def test_r3_a_delete_over_several_series_is_kept_if_any_one_of_them_may_be_outside():
+    both = Tombstone(11, (1, 3), DELETE_MUMBAI.from_ts, DELETE_MUMBAI.to_ts)
+    has_series_1 = FakeTable("000005.sst", {1}, T_10_00, T_10_00 + HOUR - 1)
+    v = version((W_10, (A, B, has_series_1)))
+
+    assert not tombstone_droppable(both, job(A, B), v)
