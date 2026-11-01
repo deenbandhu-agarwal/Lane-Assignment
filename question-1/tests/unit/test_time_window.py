@@ -86,3 +86,14 @@ def test_sizes_that_do_not_nest_are_rejected():
         w.parent(30 * 60_000)            # a parent must be bigger
     with pytest.raises(ValueError):
         w.children(25 * 60_000)          # 25 min does not divide 1 h
+
+
+T_11_59_59_999 = 1_730_375_999_999
+
+
+def test_window_closes_only_once_newest_data_is_past_its_end_plus_one_grace_window():
+    w = TimeWindow(HOUR, T_10_00_00_000)          # ends 10:59:59.999, grace 1 h -> closes after 11:59:59.999
+
+    assert not w.is_closed(T_10_37_12_345, grace_ms=HOUR)   # data still inside the window
+    assert not w.is_closed(T_11_59_59_999, grace_ms=HOUR)   # exactly end + grace: still open
+    assert w.is_closed(T_12_00_00_000, grace_ms=HOUR)       # one ms later: closed

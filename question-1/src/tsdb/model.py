@@ -95,7 +95,7 @@ class TimeWindow:
     def is_closed(self, newest_data_ts: Timestamp, grace_ms: int) -> bool:
         """Closed when the newest DATA timestamp written is past end + grace (grace = one smallest
         window). Uses data time, not wall clock: deterministic tests, past timestamps work."""
-        raise NotImplementedError
+        return newest_data_ts > self.end_ms + grace_ms
 
     def label(self) -> str:
         """Directory name: '<size_ms>/<start_ms>' (dump tool prints it human-readable)."""
