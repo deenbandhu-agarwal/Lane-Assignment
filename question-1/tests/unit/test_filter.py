@@ -2,6 +2,7 @@
 
 import pytest
 
+from tsdb.errors import FilterSyntaxError
 from tsdb.query.filter import And, Eq, NotEq, Or, parse
 
 
@@ -36,3 +37,24 @@ def test_quoted_values_may_hold_spaces_operators_and_escaped_quotes():
     assert parse('q="a=b AND (c)"') == Eq("q", "a=b AND (c)")
     assert parse(r'q="say \"hi\" \\ bye"') == Eq("q", 'say "hi" \\ bye')
     assert parse("op=and") == Eq("op", "and")             # a keyword word is fine as a value
+
+
+@pytest.mark.parametrize("text, position, words", [
+    ("a=1 AND", 7, "expected a tag key"),          # nothing after AND
+    ("(a=1", 4, "expected ')'"),
+    ("a=1 b=2", 4, "expected AND, OR or end"),
+    ("=1", 0, "expected a tag key"),
+    ("a=", 2, "expected a value"),
+    ("a 1", 2, "expected '=' or '!='"),
+    ('a="open', 2, "unclosed quote"),
+    ("a=1)", 3, "expected AND, OR or end"),
+    ("a=1 & b=2", 4, "unexpected character"),
+    ("", 0, "expected a tag key"),
+    ('a="x" "y"', 6, "expected AND, OR or end"),   # error points at the START of "y"
+])
+def test_a_syntax_error_names_the_problem_and_its_position(text, position, words):
+    with pytest.raises(FilterSyntaxError) as err:
+        parse(text)
+
+    assert err.value.position == position
+    assert words in str(err.value)

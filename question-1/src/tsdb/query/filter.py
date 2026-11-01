@@ -76,8 +76,9 @@ def _tokens(text: str) -> list[_Token]:
             out.append(_Token("!=", "!=", i))
             i += 2
         elif c == '"':
-            value, i = _quoted(text, i)
+            value, end = _quoted(text, i)
             out.append(_Token("string", value, i))
+            i = end
         elif m := _WORD.match(text, i):
             out.append(_Token("word", m.group(), i))
             i = m.end()
@@ -109,7 +110,9 @@ class _Parser:
         self._i = 0
 
     def parse(self) -> FilterExpr:
+        """An empty filter is NOT parsed: the API passes None for 'no filter'."""
         expr = self._expr()
+        self._expect("end", "expected AND, OR or end of filter")
         return expr
 
     def _expr(self) -> FilterExpr:
@@ -126,23 +129,27 @@ class _Parser:
         return children[0] if len(children) == 1 else node(tuple(children))
 
     def _factor(self) -> FilterExpr:
-        tok = self._next()
-        if tok.kind == "(":
+        if self._peek().kind == "(":
+            self._i += 1
             expr = self._expr()
-            self._next()
+            self._expect(")", "expected ')'")
             return expr
-        key = tok.text
-        op = self._next()
-        value = self._next().text
+        key = self._expect("word", "expected a tag key or '('").text
+        op = self._expect(("=", "!="), "expected '=' or '!='")
+        value = self._expect(("word", "string"), "expected a value").text
         return Eq(key, value) if op.kind == "=" else NotEq(key, value)
+
+    def _expect(self, kinds, message: str) -> _Token:
+        tok = self._peek()
+        if tok.kind not in (kinds if isinstance(kinds, tuple) else (kinds,)):
+            raise FilterSyntaxError(message, tok.pos)
+        self._i += 1
+        return tok
 
     def _peek(self) -> _Token:
         return self._tokens[self._i]
 
-    def _next(self) -> _Token:
-        tok = self._tokens[self._i]
-        self._i += 1
-        return tok
+
 
 
 def evaluate(expr: FilterExpr | None, postings: PostingSource, metric: str | None) -> list[SeriesId]:
