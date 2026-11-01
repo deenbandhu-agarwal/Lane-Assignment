@@ -52,6 +52,10 @@ class Recovery:
         state = self._manifest.load() or ManifestState(version=0, next_file_no=1, last_flushed_seq=0,
                                                        wal_count=self._wal_count, wal_segment=1)
         self._series.load()
+        removed = self._remove_flushed_segments(state.wal_segment)
+        windows = tuple((w, tuple(self._tables.open_reader(self._layout.sstable(w, int(n[:6])), w)
+                                  for n in reversed(names)))            # newest first
+                        for w, names in state.windows)
         memtable = self._new_memtable()
         last_seq, replayed, newest_segment = state.last_flushed_seq, 0, state.wal_segment - 1
         for record in self._replay(self._wal_count, state.wal_segment):
@@ -63,5 +67,16 @@ class Recovery:
             while self._layout.wal_segment(wal, segment).exists():
                 newest_segment = max(newest_segment, segment)
                 segment += 1
-        return RecoveredState(state, (), memtable, last_seq, active_segment=newest_segment + 1,
-                              replayed_records=replayed)
+        return RecoveredState(state, windows, memtable, last_seq, active_segment=newest_segment + 1,
+                              removed_orphans=removed, replayed_records=replayed)
+
+    def _remove_flushed_segments(self, first_live: int) -> list[Path]:
+        """Segments below MANIFEST.wal_segment are already in tables (a crash between the MANIFEST
+        commit and their deletion leaves them behind). Replaying them would be harmless but wasteful."""
+        removed = []
+        for wal in range(self._wal_count):
+            for path in self._files.list_dir(self._layout.wal_segment(wal, 0).parent):
+                if path.suffix == ".log" and int(path.stem) < first_live:
+                    self._files.remove(path)
+                    removed.append(path)
+        return removed

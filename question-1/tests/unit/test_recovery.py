@@ -82,3 +82,22 @@ def test_r2_acknowledged_writes_and_deletes_come_back_from_the_wal(tmp_path):
     assert state.memtable.max_timestamp == T + 1_000
     assert state.active_segment == 2                     # new writes go to a fresh segment
     assert d.series.loaded == 1
+
+
+def test_r3_after_a_flush_files_come_from_the_manifest_and_only_newer_wal_segments_are_replayed(tmp_path):
+    d = Dir(tmp_path)
+    d.table(1, [Point(1, T, 1, 30.1), Point(3, T, 2, 32.5)])
+    d.manifest.commit(ManifestState(version=1, next_file_no=2, last_flushed_seq=2, wal_count=1, wal_segment=2,
+                                    newest_data_ts=T, windows=((W_10_00, ("000001.sst",)),)))
+    old = d.wal(1, Point(1, T, 1, 30.1), Point(3, T, 2, 32.5))     # crash right after the commit:
+    d.wal(2, Point(1, T, 3, 29.9))                                  # segment 1 was not deleted yet
+
+    state = d.recover()
+
+    [(window, (table,))] = state.windows
+    assert (window, table.name) == (W_10_00, "000001.sst")
+    assert list(table.iter_all()) == [Point(1, T, 1, 30.1), Point(3, T, 2, 32.5)]
+    assert list(state.memtable.iter_for_flush()) == [Point(1, T, 3, 29.9)]    # segment 1 NOT replayed again
+    assert state.last_seq == 3
+    assert not old.exists()                                          # already flushed: deleted
+    assert state.active_segment == 3
