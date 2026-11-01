@@ -47,3 +47,30 @@ def test_p1_four_files_in_one_hour_are_merged_and_three_are_not():
     assert POLICY.pick(version(three, NOW_10_30)) is None
     job = POLICY.pick(version(four, NOW_10_30))
     assert (job.kind, job.output_window, names(job)) == (JobKind.SIZE_TIERED, hour(10), ["a", "b", "c", "d"])
+
+
+SIX_HOURS_OF_FILES = {hour(h): (FakeTable(f"h{h}"),) for h in range(6, 12)}   # one file per hour 06..11
+T_12_59_59_999 = T_00_00 + 13 * HOUR - 1
+T_13_00 = T_00_00 + 13 * HOUR
+
+
+def test_p2_six_closed_hours_move_up_into_their_six_hour_window():
+    # 06:00-12:00 ends 11:59:59.999; grace one hour -> closed once newest data is past 12:59:59.999
+    job = POLICY.pick(version(SIX_HOURS_OF_FILES, T_13_00))
+
+    assert (job.kind, job.output_window) == (JobKind.MOVE_UP, W_06_12)
+    assert names(job) == ["h10", "h11", "h6", "h7", "h8", "h9"]
+
+
+def test_p2_no_move_up_while_the_last_hour_can_still_get_writes():
+    assert POLICY.pick(version(SIX_HOURS_OF_FILES, T_12_59_59_999)) is None
+
+
+def test_p2_four_closed_days_of_six_hour_files_move_up_into_one_day():
+    quarters = {TimeWindow(SIX_HOURS, T_00_00 + q * SIX_HOURS): (FakeTable(f"q{q}"),) for q in range(4)}
+    next_day_01_00 = T_00_00 + DAY + HOUR + 1                 # day ends 23:59:59.999, grace 1 h
+
+    job = POLICY.pick(version(quarters, next_day_01_00))
+
+    assert (job.kind, job.output_window, names(job)) == (JobKind.MOVE_UP, TimeWindow(DAY, T_00_00),
+                                                         ["q0", "q1", "q2", "q3"])

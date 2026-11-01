@@ -82,6 +82,15 @@ class TimeWindowPolicy(CompactionPolicy):
         return None
 
     def _move_up(self, groups, newest_data_ts: int) -> CompactionJob | None:
+        grace = self._steps[0]
+        for step in self._steps[1:]:                                  # smallest bigger step first
+            candidates: dict[TimeWindow, list] = {}
+            for top, members in groups.items():
+                if top.size_ms < step:
+                    candidates.setdefault(top.parent(step), []).extend(members)
+            for window, members in sorted(candidates.items()):
+                if window not in groups and window.is_closed(newest_data_ts, grace):
+                    return CompactionJob(JobKind.MOVE_UP, tuple(t for _, t in members), window)
         return None
 
     def _late_merge(self, groups) -> CompactionJob | None:
