@@ -1,0 +1,36 @@
+[project]
+name = "tsdb"
+version = "0.1.0"
+description = "Single-node embedded time-series database (LSM tree) with a REST API"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "pydantic>=2.9",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+tsdb = "tsdb.__main__:main"
+tsdb-dump = "tsdb.tools.dump:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tsdb"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "crash: kills a child process (kill -9 / fault injection)",
+    "stress: concurrency stress tests",
+    "slow: long-running tests",
+]
