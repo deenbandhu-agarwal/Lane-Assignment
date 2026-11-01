@@ -10,6 +10,13 @@ Timestamp = int   # Unix epoch milliseconds (i64)
 Seq = int         # global write order inside a shard (u64); bigger = newer
 
 
+_ESCAPE = str.maketrans({c: "\\" + c for c in "\\,={}"})
+
+
+def _escape(text: str) -> str:
+    return text.translate(_ESCAPE)
+
+
 @dataclass(frozen=True, slots=True)
 class SeriesKey:
     """metric + full tag set. Identity of a series. Tag order never matters."""
@@ -23,8 +30,10 @@ class SeriesKey:
         return SeriesKey(metric, tuple(sorted(tags.items())))
 
     def canonical(self) -> str:
-        """'temperature{city=Delhi,sensor=roof}' — stored in series.log, hashed for WAL routing."""
-        raise NotImplementedError
+        """'temperature{city=Delhi,sensor=roof}' — stored in series.log, hashed for WAL routing.
+        \\ , = { } inside names/values get a backslash, so two different series never share a text."""
+        tags = ",".join(f"{_escape(k)}={_escape(v)}" for k, v in self.tags)
+        return f"{_escape(self.metric)}{{{tags}}}"
 
 
 @dataclass(frozen=True, slots=True)

@@ -185,6 +185,10 @@ Legend — **Outcome:** `decision` (changed the design) · `clarified` (no desig
 - **Answer:** API: `to` inclusive; `k!=v` matches series without tag `k`; a bad point rejects the whole batch (400 with its index); empty buckets omitted; `agg` without `bucket` = one value for the whole range; DELETE resolves a fixed series-id set at delete time; `metric` optional on `/series` and `DELETE` but DELETE needs a metric or a filter; limits 10,000 series / 5,000,000 points per query → 400. Engine: fully deleted series stay listed by `GET /series`; memtable size estimated at ~100 bytes per entry plus a `max_entries` cap; flush when full **or** when the memtable's oldest window closes; a WAL-count change versus MANIFEST refuses to start. TDD order: pure modules bottom-up (TimeWindow, WAL record, skip list, Bloom, SSTable, MANIFEST, memtable, merge/aggregate, filter, split_by_window, Rule 2), then engine (after the threads/snapshot discussion), then crash tests (after the harness discussion), benchmark last.
 - **Outcome:** decision (all proposed defaults accepted).
 
+### 42. Can two different series end up with the same canonical text (series.log key, WAL routing)?
+- **Answer:** Yes, if names or values contain separators: tags `{a: "1,b=2"}` and `{a: "1", b: "2"}` both print as `m{a=1,b=2}` and would share one series id. Options: escape `\ , = { }` with a backslash, or reject those characters in the API (400).
+- **Outcome:** decision: **escape** (any string still accepted, text stays readable). Tested in `tests/unit/test_series_key.py`.
+
 ### Tooling
 - A prototype dump tool (outside this repo) printed SSTable / WAL / series.log / MANIFEST files as text (`--hex` for raw bytes) and showed a cut WAL record as "replay stops here". The engine ships the same as `tsdb-dump` (`src/tsdb/tools/dump.py`).
 
