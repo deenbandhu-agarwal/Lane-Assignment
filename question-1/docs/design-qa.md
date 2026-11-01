@@ -228,6 +228,17 @@ Legend — **Outcome:** `decision` (changed the design) · `clarified` (no desig
 - **Limit:** SIGKILL keeps the OS page cache, so it does not imitate a power cut. Fsync correctness is covered by the failing-fsync tests (#46, #49), not by these.
 - **Outcome:** decision. `tests/crash/` (5 points × `wal_count` 1 and 2, plus kill -9 × `wal_count` 1 and 2, ~30 s).
 
+### 51. Can Rule 2 ever keep a tombstone with our compaction policy?
+- **Answer:** Not end to end, as far as the tests show. A tombstone piece is cut to one window. Every job takes ALL files nested in its top window (size-tiered: all files of the window; move-up: all children; late merge: the big file plus every extra). So no live table outside the job can hold the series in that range, and Rule 2 always says "drop". Found by a mutation check: making Rule 2 always drop failed no integration test. Making it never drop did fail one.
+- **Outcome:** Rule 2 stays as a safety net (it is cheap: Bloom checks only). It is needed by any future policy whose job takes part of a window (e.g. leveled), and it is unit-tested on its own (`test_rule2.py`).
+
+### 52. Torn reads found by the snapshot stress test
+- **What happened:** 1 writer (batch i = timestamp i on all 10 series) and 3 readers. Some reads saw a batch on only 9 of 10 series. Debugged step by step: re-running the same query on the same snapshot gave the right answer, so the data was there and the read was wrong.
+- **Cause 1 (skip list, the real one):** `iter_from` searched for the last node `< key` and then read that node's `next` a second time. In between, the writer linked a new SMALLER key right after it (the previous series' newest point, e.g. `(5,14)` after `(5,13)` while reading series 6). The read started there, saw "series 5", and the memtable stopped: series 6 returned nothing. Fix: step over keys `< key` before yielding. It is one loop, still lock-free. The old concurrency test walked with `__iter__` only and never used `iter_from`; a new test (`iter_from` during inserts, 10 series, 3 readers) failed in under a second before the fix.
+- **Cause 2 (shard, by reasoning):** the query looked up series ids BEFORE taking the snapshot, so a series created between the two was left out although its points were visible. Now ids are looked up after the snapshot (a series is in the index before its first WAL write).
+- **Also tried and ruled out:** memory reordering on ARM (a lock as a barrier between build and publish did not help).
+- **Outcome:** both fixed; the stress test passed 5/5 runs after the fix.
+
 ### Tooling
 - A prototype dump tool (outside this repo) printed SSTable / WAL / series.log / MANIFEST files as text (`--hex` for raw bytes) and showed a cut WAL record as "replay stops here". The engine ships the same as `tsdb-dump` (`src/tsdb/tools/dump.py`).
 

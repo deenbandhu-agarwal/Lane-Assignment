@@ -52,8 +52,13 @@ class SkipList:
         self._len += 1
 
     def iter_from(self, key: OrderedKey) -> Iterator[tuple[OrderedKey, float]]:
-        """Entries with key >= `key`, ascending."""
+        """Entries with key >= `key`, ascending.
+        Step over keys < `key`: between the search and this read the writer may have linked a
+        SMALLER key right after the predecessor (e.g. the previous series' newest point).
+        Starting there would make the caller see "next series" and stop with nothing (design-qa #52)."""
         node = self._find_predecessors(key)[0].next[0]
+        while node is not None and node.key < key:
+            node = node.next[0]
         while node is not None:
             yield node.key, node.value
             node = node.next[0]

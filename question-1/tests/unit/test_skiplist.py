@@ -110,3 +110,50 @@ def test_a_reader_walking_during_inserts_never_sees_a_broken_list(store):
     assert problems == []
     assert walks > 1                     # the reader really overlapped the writer
     assert [k for k, _ in store] == sorted(keys)
+
+
+def test_iter_from_during_inserts_starts_at_the_key_even_when_a_smaller_key_lands_right_before_it(store):
+    """The memtable read: `iter_from((series, from_ts, newest))` while the writer appends the
+    NEXT point of the previous series. That new key is smaller than ours and lands right after
+    our search's predecessor; the walk must step over it, not stop there (seen in the snapshot
+    stress test as a series missing its points). 10 series, one writer, 3 readers, <= 3 s."""
+    import threading
+    import time
+
+    published = [-1]                       # every batch <= this is fully inserted
+    lock, stop, problems = threading.Lock(), threading.Event(), []
+
+    def writer():
+        seq = 0
+        for batch in range(10**6):
+            if stop.is_set():
+                return
+            for s in range(10):
+                seq += 1
+                store.insert((s, batch, -seq), float(batch))
+            with lock:
+                published[0] = batch
+
+    def reader():
+        while not stop.is_set():
+            with lock:
+                upto = published[0]
+            for s in range(10):
+                got = 0
+                for (sid, ts, _), _ in store.iter_from((s, 0, -(2**62))):
+                    if sid != s or ts > upto:
+                        break
+                    got += 1
+                if got != upto + 1:
+                    problems.append(f"series {s}: {got} of {upto + 1} batches")
+                    stop.set()
+                    return
+
+    threads = [threading.Thread(target=writer)] + [threading.Thread(target=reader) for _ in range(3)]
+    for t in threads:
+        t.start()
+    time.sleep(3)
+    stop.set()
+    for t in threads:
+        t.join()
+    assert problems == []

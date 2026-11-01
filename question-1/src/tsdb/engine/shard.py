@@ -55,9 +55,11 @@ class Shard:
     # ---- read path ----------------------------------------------------------------
     def query(self, metric: str, expr: FilterExpr | None, from_ts: Timestamp, to_ts: Timestamp,
               agg: Aggregation | None, bucket_ms: int | None) -> QueryResult:
-        ids = evaluate(expr, self._index, metric)
         snapshot = self._versions.acquire(self._seq.visible)      # never seq.last (#45)
         try:
+            # ids AFTER the snapshot: a series is in the index before its first WAL write, so every
+            # series with a visible point is listed (ids first missed one created in between, #52)
+            ids = evaluate(expr, self._index, metric)
             return self._new_executor(snapshot).run(ids, from_ts, to_ts, agg, bucket_ms)
         finally:
             self._versions.release(snapshot)
