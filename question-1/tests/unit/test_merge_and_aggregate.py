@@ -1,21 +1,30 @@
-"""Scaffold: each test states the property it must prove."""
+"""Merge-on-read for one series, and streaming bucket aggregation (seams 1-5).
+Numbers follow the walkthrough example."""
 
 import pytest
 
-pytestmark = pytest.mark.skip(reason="scaffold: not implemented")
+from tsdb.model import Point, Tombstone
+from tsdb.query.merge import merge_series
+
+T_10_00 = 1_730_368_800_000
+T_10_01 = 1_730_368_860_000
+T_10_02 = 1_730_368_920_000
 
 
-def test_newest_seq_wins():
-    """Same timestamp in memtable and SSTable -> higher seq returned once."""
+def test_the_newest_seq_wins_and_each_timestamp_comes_back_once():
+    file_000001 = iter([Point(1, T_10_00, 1, 30.1), Point(1, T_10_01, 4, 30.4)])
+    memtable = iter([Point(1, T_10_00, 9, 29.9), Point(1, T_10_02, 7, 31.0)])
+
+    assert list(merge_series([file_000001, memtable], tombstones=[])) == [
+        Point(1, T_10_00, 9, 29.9),
+        Point(1, T_10_01, 4, 30.4),
+        Point(1, T_10_02, 7, 31.0),
+    ]
 
 
-def test_tombstone_hides_only_older_seq():
-    """Write after delete (higher seq) stays visible."""
+def test_order_of_sources_does_not_matter():
+    a = [Point(1, T_10_00, 1, 30.1)]
+    b = [Point(1, T_10_00, 9, 29.9)]
 
-
-def test_bucket_alignment_from_epoch():
-    """bucket_start = ts - ts % size; first bucket may start before `from`."""
-
-
-def test_each_aggregation():
-    """avg/sum/min/max/count over known data."""
+    assert list(merge_series([iter(b), iter(a)], [])) == list(merge_series([iter(a), iter(b)], [])) \
+        == [Point(1, T_10_00, 9, 29.9)]

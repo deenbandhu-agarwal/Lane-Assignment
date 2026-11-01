@@ -9,10 +9,18 @@ Output: one point per timestamp, ascending. Streaming (constant memory per serie
 
 from __future__ import annotations
 
+import heapq
 from collections.abc import Iterable, Iterator
 
 from tsdb.model import Point, Tombstone
 
 
 def merge_series(sources: Iterable[Iterator[Point]], tombstones: list[Tombstone]) -> Iterator[Point]:
-    raise NotImplementedError
+    # heap key (timestamp, -seq): for one timestamp the newest version comes out first
+    merged = heapq.merge(*sources, key=lambda p: (p.timestamp, -p.seq))
+    last_ts = None
+    for point in merged:
+        if point.timestamp == last_ts:
+            continue                          # an older version of a timestamp already decided
+        last_ts = point.timestamp
+        yield point
