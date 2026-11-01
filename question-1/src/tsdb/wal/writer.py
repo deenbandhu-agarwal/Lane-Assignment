@@ -10,7 +10,9 @@ Loop:
        --- release shared ---
     6. seq.wait_until_visible(last seq of the group)  (D1: no reply before every older seq is visible)
     7. complete every waiting ticket -> the HTTP handlers reply 200
-If fsync or apply fails: FatalStorageError -> the process stops; recovery replays the WAL.
+If fsync or apply fails: every ticket in the group (and every later one) gets the error and the
+HTTP layer answers 500 and stops the process; recovery replays the WAL. A failed fsync is never
+retried: the kernel may have dropped the dirty pages, so a second fsync could "succeed" on lost data.
 """
 
 from __future__ import annotations
@@ -68,6 +70,7 @@ class WalWriter:
         self._faults = faults
         self._queue: queue.SimpleQueue[Ticket] = queue.SimpleQueue()
         self._thread: threading.Thread | None = None
+        self._failed: BaseException | None = None   # set once; never cleared (no fsync retry)
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name=f"wal-writer-{self._index}", daemon=True)
@@ -105,7 +108,15 @@ class WalWriter:
                     self._queue.put(_STOP)
                     break
                 group.append(more)
-            self._commit(group)
+            if self._failed is None:
+                try:
+                    self._commit(group)
+                    continue
+                except Exception as e:            # FatalStorageError, or apply failed half way
+                    self._failed = e
+            for t in group:
+                t.error = self._failed
+                t.done.set()
 
     def _commit(self, group: list[Ticket]) -> None:
         pending = [e for t in group for e in t.entries]

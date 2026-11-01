@@ -72,3 +72,42 @@ def test_many_writers_share_fsyncs_and_every_reply_comes_after_fsync_and_apply(t
     assert [r.entry.seq for r in on_disk.records] == list(range(1, 201))   # and = file order
     assert all(events[i - 1] == "series.log fsync" for i, e in enumerate(events) if e == "wal fsync")
     print(f"\n200 writes from 8 threads -> {fsyncs} WAL fsyncs")
+
+
+class FailingFsyncFiles(SlowFsyncFiles):
+    """The disk dies: every WAL fsync fails (FileOps turns that into FatalStorageError)."""
+
+    def fsync(self, fd):
+        raise FatalStorageError("fsync failed: EIO")
+
+    def fsync_dir(self, path):
+        pass                                                  # creating the segment still works
+
+
+def test_a_failed_fsync_fails_every_waiting_write_and_nothing_reaches_the_memtable(tmp_path):
+    events, applied = [], []
+    writer = make_writer(tmp_path, events, applied, files=FailingFsyncFiles(events))
+    tickets = [Ticket([PendingPut(1, T_10_00 + i, float(i))]) for i in range(5)]
+
+    for t in tickets:
+        writer.submit(t)
+    for t in tickets:
+        assert t.done.wait(1)
+
+    assert all(isinstance(t.error, FatalStorageError) for t in tickets)
+    assert applied == []
+
+
+def test_after_a_failed_fsync_the_writer_refuses_new_writes_instead_of_retrying(tmp_path):
+    events, applied = [], []
+    writer = make_writer(tmp_path, events, applied, files=FailingFsyncFiles(events))
+    first = Ticket([PendingPut(1, T_10_00, 1.0)])
+    writer.submit(first)
+    first.done.wait(1)
+
+    later = Ticket([PendingPut(1, T_10_00 + 1, 2.0)])
+    writer.submit(later)
+
+    assert later.done.wait(1)
+    assert isinstance(later.error, FatalStorageError)          # a retried fsync could "succeed" on lost pages
+    assert applied == []
