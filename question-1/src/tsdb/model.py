@@ -67,12 +67,12 @@ class TimeWindow:
     @staticmethod
     def containing(timestamp: Timestamp, size_ms: int) -> "TimeWindow":
         """start = timestamp - (timestamp mod size)."""
-        raise NotImplementedError
+        return TimeWindow(size_ms, timestamp - timestamp % size_ms)
 
     @property
     def end_ms(self) -> Timestamp:
         """Last millisecond inside the window (inclusive)."""
-        raise NotImplementedError
+        return self.start_ms + self.size_ms - 1
 
     def contains(self, timestamp: Timestamp) -> bool:
         raise NotImplementedError
