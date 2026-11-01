@@ -9,7 +9,7 @@ Values may be double-quoted.
 Evaluation (no full scans):
     k=v   -> posting list
     k!=v  -> universe(metric) - posting(k=v)      (series without tag k match)
-    AND   -> intersect, starting from the smallest list
+    AND   -> intersect (smallest-first ordering is a possible speed-up; not needed for correctness)
     OR    -> union
 """
 
@@ -154,4 +154,22 @@ class _Parser:
 
 def evaluate(expr: FilterExpr | None, postings: PostingSource, metric: str | None) -> list[SeriesId]:
     """Sorted ascending (the read path relies on it). None = every series of the metric."""
-    raise NotImplementedError
+    universe = postings.metric_universe(metric)
+    if expr is None:
+        return sorted(universe)
+    return sorted(_eval(expr, postings, universe))
+
+
+def _eval(expr: FilterExpr, postings: PostingSource, universe: frozenset[SeriesId]) -> frozenset[SeriesId]:
+    match expr:
+        case Eq(key, value):
+            return postings.postings(key, value) & universe
+        case NotEq(key, value):
+            return universe - postings.postings(key, value)
+        case And(children):
+            result = _eval(children[0], postings, universe)
+            for child in children[1:]:
+                result &= _eval(child, postings, universe)
+            return result
+        case Or(children):
+            return frozenset().union(*(_eval(c, postings, universe) for c in children))
