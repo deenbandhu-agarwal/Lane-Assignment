@@ -10,11 +10,17 @@ a crash; the checksum detects damaged bytes. Replay stops at the first cut/bad r
 
 from __future__ import annotations
 
+import struct
+import zlib
 from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import IntEnum
 
 from tsdb.model import Point, Tombstone
+
+
+_HEADER = struct.Struct("<II")       # length, crc32
+_PUT = struct.Struct("<BQIqd")        # type, seq, series_id, timestamp, value  (29 bytes)
 
 
 class RecordType(IntEnum):
@@ -36,7 +42,7 @@ class ScanResult:
 
 
 def encode_put(point: Point) -> bytes:
-    raise NotImplementedError
+    return _PUT.pack(RecordType.PUT, point.seq, point.series_id, point.timestamp, point.value)
 
 
 def encode_delete(tombstone: Tombstone) -> bytes:
@@ -44,14 +50,25 @@ def encode_delete(tombstone: Tombstone) -> bytes:
 
 
 def frame(payload: bytes) -> bytes:
-    raise NotImplementedError
+    return _HEADER.pack(len(payload), zlib.crc32(payload)) + payload
 
 
 def scan(data: bytes) -> ScanResult:
     """Decode records front to back; stop at the first cut or bad-checksum record."""
-    raise NotImplementedError
+    records = [DecodedRecord(offset, _decode(payload)) for offset, payload in iter_frames(data)]
+    return ScanResult(records, len(data), None)
+
+
+def _decode(payload: bytes) -> Point | Tombstone:
+    _, seq, series_id, timestamp, value = _PUT.unpack(payload)
+    return Point(series_id, timestamp, seq, value)
 
 
 def iter_frames(data: bytes) -> Iterator[tuple[int, bytes]]:
     """Low-level: yield (offset, payload) for each valid frame. Shared with series.log."""
-    raise NotImplementedError
+    offset = 0
+    while offset < len(data):
+        length, _ = _HEADER.unpack_from(data, offset)
+        start = offset + _HEADER.size
+        yield offset, data[start:start + length]
+        offset = start + length
