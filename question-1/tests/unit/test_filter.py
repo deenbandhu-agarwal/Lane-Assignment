@@ -103,3 +103,17 @@ def test_filters_select_the_right_series_sorted_ascending(name, text, ids):
 
 def test_no_filter_means_every_series_of_the_metric():
     assert evaluate(None, CPU, "cpu") == [1, 2, 3, 4]
+
+
+def test_results_never_leak_from_another_metric_with_the_same_tags():
+    both = FakePostings({
+        1: SeriesKey.of("cpu", {"host": "h1"}),
+        2: SeriesKey.of("cpu", {"host": "h2"}),
+        5: SeriesKey.of("mem", {"host": "h1"}),
+        6: SeriesKey.of("mem", {"host": "h2"}),
+    })
+
+    assert evaluate(parse("host=h1"), both, "cpu") == [1]
+    assert evaluate(parse("host=h1 OR host=h2"), both, "mem") == [5, 6]
+    assert evaluate(parse("host!=h1"), both, "mem") == [6]
+    assert evaluate(parse("host=h1"), both, None) == [1, 5]          # no metric: every metric
