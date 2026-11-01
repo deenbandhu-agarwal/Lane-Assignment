@@ -79,3 +79,13 @@ class OsFileOps:
 
     def list_dir(self, path: Path) -> list[Path]:
         return sorted(path.iterdir()) if path.exists() else []
+
+    def make_dirs(self, path: Path) -> None:
+        """mkdir -p, then fsync each new directory's parent so the new entries survive a crash."""
+        missing = []
+        while not path.exists():
+            missing.append(path)
+            path = path.parent
+        for directory in reversed(missing):
+            directory.mkdir(exist_ok=True)
+            self.fsync_dir(directory.parent)

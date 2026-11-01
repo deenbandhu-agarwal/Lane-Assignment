@@ -26,6 +26,7 @@ class SSTableFactory:
 
     def new_writer(self, window: TimeWindow, file_no: int) -> SSTableWriter:
         final = self._table_path(window, file_no)
+        self._files.make_dirs(final.parent)
         tmp = final.with_name(final.name + ".tmp")
         return SSTableWriter(tmp, window, self._files, self._faults, self._filters,
                              self._block_target_bytes, self._filter_fp_rate)

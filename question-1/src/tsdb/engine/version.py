@@ -29,7 +29,7 @@ class Version:
     active: MemtablePort
     immutables: tuple[MemtablePort, ...]                 # newest first, being flushed
     windows: tuple[tuple[TimeWindow, tuple[TableReader, ...]], ...]   # sorted by start; files newest first
-    newest_data_ts: Timestamp                            # max(flushed, memtables): drives window closing
+    newest_data_ts: Timestamp                            # newest FLUSHED data time: drives window closing
 
     def tables_overlapping(self, from_ts: Timestamp, to_ts: Timestamp) -> list[TableReader]:
         """Tables whose window overlaps [from, to]: the first, cheapest pruning step of a read."""

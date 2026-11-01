@@ -13,20 +13,24 @@ Order (each step is safe to crash after; README crash table):
        window (writers opened lazily); cut each tombstone into the windows that may hold older
        data: this flush's windows + live tables' windows (split_by_window, design-qa #44)    -> hit(SSTABLE_WRITE)
     3. tables.publish each .tmp (rename + dir fsync)
-    4. manifest.commit: add the new tables under their windows, raise last_flushed_seq and
-       newest_data_ts                                                            -> hit(MANIFEST_UPDATE)
-    5. versions.install(new Version); delete the old WAL segments
+    4+5. LiveState.commit(Edit): MANIFEST gets the new tables under their windows, last_flushed_seq,
+       newest_data_ts and the next WAL segment            -> hit(MANIFEST_UPDATE) inside the commit;
+       then the new Version (files in, frozen memtable out) is installed; then the old WAL
+       segments are deleted
 """
 
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 from collections.abc import Iterable
 
+from tsdb.engine.state import Edit, LiveState
 from tsdb.engine.swap_lock import SwapLock
 from tsdb.engine.version import VersionSet
 from tsdb.model import Point, TimeWindow, Tombstone
-from tsdb.ports import FaultInjector, FileOps, ManifestPort, MemtableFactory, MemtablePort, TableFactory, WalPort
+from tsdb.faults import CrashPoint
+from tsdb.ports import FaultInjector, FileOps, MemtableFactory, MemtablePort, TableFactory, WalPort
 
 
 def split_by_window(points: list[Point], tombstones: list[Tombstone], window_ms: int,
@@ -51,24 +55,52 @@ def split_by_window(points: list[Point], tombstones: list[Tombstone], window_ms:
 
 
 class Flusher:
-    def __init__(self, versions: VersionSet, wal: WalPort, manifest: ManifestPort, tables: TableFactory,
+    def __init__(self, versions: VersionSet, wal: WalPort, state: LiveState, tables: TableFactory,
                  new_memtable: MemtableFactory, files: FileOps, faults: FaultInjector,
                  swap_lock: SwapLock, smallest_window_ms: int) -> None:
-        self._swap_lock = swap_lock
         self._versions = versions
         self._wal = wal
-        self._manifest = manifest
+        self._state = state
         self._tables = tables
         self._new_memtable = new_memtable
         self._files = files
         self._faults = faults
+        self._swap_lock = swap_lock
         self._smallest_window_ms = smallest_window_ms
         self._lock = threading.Lock()      # one flush at a time; memtables flush in order
+        self._segments: dict[int, tuple[int, list[Path]]] = {}   # id(memtable) -> (its segment, files)
 
     def swap_memtable(self) -> MemtablePort:
         """Step 1. Returns the frozen memtable (now immutable, still readable)."""
-        raise NotImplementedError
+        with self._swap_lock.exclusive():
+            current = self._versions.current()
+            frozen = current.active
+            frozen.freeze()
+            active = self._new_memtable()
+            segment = self._state.next_segment()
+            old_files = self._wal.rotate_all(segment, active)
+            self._segments[id(frozen)] = (segment - 1, old_files)
+            self._state.install_memtables(active, (frozen, *current.immutables))
+        self._faults.hit(CrashPoint.MEMTABLE_FLUSH)
+        return frozen
 
     def flush(self, memtable: MemtablePort) -> None:
         """Steps 2-5."""
-        raise NotImplementedError
+        with self._lock:
+            live_windows = [w for w, _ in self._versions.current().windows]
+            groups = split_by_window(list(memtable.iter_for_flush()), memtable.all_tombstones(),
+                                     self._smallest_window_ms, live_windows)
+            added = []
+            for window, (points, tombstones) in groups.items():
+                file_no = self._state.allocate_file_no()
+                writer = self._tables.new_writer(window, file_no)
+                for t in tombstones:
+                    writer.add_tombstone(t)
+                for p in points:
+                    writer.add(p)
+                final = self._tables.publish(writer.finish(), window, file_no)
+                added.append((window, self._tables.open_reader(final, window)))
+            segment, old_files = self._segments.pop(id(memtable))
+            self._state.commit(Edit(added=tuple(added), flushed=memtable, wal_segment=segment + 1))
+            for path in old_files:
+                self._files.remove(path)

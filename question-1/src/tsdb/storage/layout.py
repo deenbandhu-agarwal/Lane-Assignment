@@ -22,17 +22,17 @@ class ShardLayout:
 
     @property
     def manifest(self) -> Path:
-        raise NotImplementedError
+        return self.root / "MANIFEST"
 
     @property
     def series_log(self) -> Path:
-        raise NotImplementedError
+        return self.root / "series.log"
 
     def wal_segment(self, wal_index: int, segment: int) -> Path:
-        raise NotImplementedError
+        return self.root / "wal" / str(wal_index) / f"{segment:06d}.log"
 
     def sstable(self, window: TimeWindow, file_no: int) -> Path:
-        raise NotImplementedError
+        return self.root / "sst" / str(window.size_ms) / str(window.start_ms) / f"{file_no:06d}.sst"
 
     def tmp_for(self, final_path: Path) -> Path:
-        raise NotImplementedError
+        return final_path.with_name(final_path.name + ".tmp")

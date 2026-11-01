@@ -210,6 +210,10 @@ Legend — **Outcome:** `decision` (changed the design) · `clarified` (no desig
 - Also decided while building it: series.log records are `id u32 | JSON [metric, [[k, v], ...]]` inside the WAL frame (no un-escape parser needed); a cut tail is truncated before new appends (else new records hide behind garbage); a failed fsync fails the group and every later write and is never retried; a delete spanning several WALs is split so each copy names only its own WAL's series (each copy gets that WAL's seq, which is all Rule 1 needs since a series lives in one WAL).
 - **Outcome:** decision (series.log fsync before WAL fsync). Tested in `test_wal_writer.py`, `test_series_catalog.py`, `test_wal_set.py`.
 
+### 47. Flush and compaction run on two threads: who owns the MANIFEST?
+- **Answer:** Both do "read state → change → commit MANIFEST → install Version". If each kept its own copy, a compaction commit built from an older state could overwrite a flush commit, and the flushed file would vanish from the MANIFEST (data still on disk, but not live, so lost after the WAL segment is deleted). Same for file numbers: two threads could pick the same number.
+- **Outcome:** decision: one `LiveState` object owns the current MANIFEST state, file-number allocation, the WAL segment counter and Version building, all under one lock. Flush and compaction only send it an `Edit` (tables added / removed, memtable flushed, next WAL segment). Order inside: new state → `manifest.commit` → `versions.install`. Found while writing the flush tests (#45 D3 consequence).
+
 ### Tooling
 - A prototype dump tool (outside this repo) printed SSTable / WAL / series.log / MANIFEST files as text (`--hex` for raw bytes) and showed a cut WAL record as "replay stops here". The engine ships the same as `tsdb-dump` (`src/tsdb/tools/dump.py`).
 
