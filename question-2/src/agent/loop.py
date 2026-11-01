@@ -95,10 +95,9 @@ class Agent:
         self.system_prompt = system_prompt
         self.limits = limits
 
-    # -- tool execution (the approval gate hooks in here) ---------------------------
-
     def execute_tool(self, call: ToolCall, tracer: Tracer) -> ToolResult:
-        return self.tools.execute(call)
+        # Write tools go through the registry's approval gate; gate decisions land in the trace.
+        return self.tools.execute(call, audit=tracer.event)
 
     # -- the loop ------------------------------------------------------------------
 

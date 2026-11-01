@@ -14,7 +14,10 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
+from agent.gate import ApprovalGate
 from agent.types import ToolCall, ToolSpec
+
+Audit = Callable[..., None]  # (event_kind, **data), usually Tracer.event
 
 # Error types that mean "the model produced a bad call" (counted towards the malformed limit).
 MALFORMED = frozenset({"unknown_tool", "invalid_json", "invalid_args"})
@@ -64,8 +67,11 @@ class ToolResult:
 
 
 class ToolRegistry:
-    def __init__(self, tools: Iterable[Tool] = ()) -> None:
+    """Write tools only ever run through the approval gate; without a gate they are refused."""
+
+    def __init__(self, tools: Iterable[Tool] = (), *, gate: ApprovalGate | None = None) -> None:
         self._tools: dict[str, Tool] = {}
+        self._gate = gate
         for t in tools:
             self.register(t)
 
@@ -103,11 +109,30 @@ class ToolRegistry:
             return ToolResult.failure("invalid_args", "arguments failed validation", problems=problems)
         return tool, args
 
-    def execute(self, call: ToolCall) -> ToolResult:
+    def execute(self, call: ToolCall, audit: Audit | None = None) -> ToolResult:
         parsed = self.parse(call)
         if isinstance(parsed, ToolResult):
             return parsed
         tool, args = parsed
+        if tool.writes:
+            return self._gated(tool, args, audit or (lambda *_a, **_k: None))
+        return self.invoke(tool, args)
+
+    def _gated(self, tool: Tool, args: BaseModel, audit: Audit) -> ToolResult:
+        if self._gate is None:
+            audit("gate", tool=tool.name, decision="no_gate")
+            return ToolResult.failure("approval_required", "write tools are disabled in this session")
+        plain = args.model_dump(mode="json")
+        token = self._gate.request(tool.name, plain)
+        if token is None:
+            audit("gate", tool=tool.name, args=plain, decision="denied")
+            return ToolResult.failure(
+                "approval_denied", "the human did not approve this write; it was not performed"
+            )
+        if not self._gate.consume(token, tool.name, plain):
+            audit("gate", tool=tool.name, args=plain, decision="token_rejected")
+            return ToolResult.failure("approval_invalid", "approval did not match this write")
+        audit("gate", tool=tool.name, args=plain, decision="approved")
         return self.invoke(tool, args)
 
     @staticmethod
