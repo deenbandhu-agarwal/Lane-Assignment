@@ -163,6 +163,16 @@ Legend — **Outcome:** `decision` (changed the design) · `clarified` (no desig
 - **Answer:** All per file or finer, never global. Cassandra/ScyllaDB: one per SSTable (`Filter.db`, off-heap), on the partition key, `bloom_filter_fp_chance` per table (default differs by compaction strategy). RocksDB: one "full filter" per SST by default; partitioned filters for big files; whole-key or prefix Bloom; Ribbon filter (~30% smaller); optional memtable Bloom. LevelDB: filter block per SST, one small filter per ~2 KB of data, pluggable FilterPolicy. HBase: per HFile, chunked "compound" Bloom, row or row+column. ClickHouse: skipping index per granule group. Parquet: per column chunk. Prometheus: no Bloom; exact per-block inverted index. Pattern: filter key matches the read pattern; our series-id filter is like RocksDB's prefix Bloom. (Defaults not re-checked against current docs.)
 - **Outcome:** clarified; confirms #35. At ~12 KB per 64 MB file, no partitioning needed.
 
+## Compaction
+
+### 37. Which compaction strategy? (discussion opened)
+- **Answer:** Our data arrives in time order with every series writing continuously, so every flush file holds ~all series but its own time slice: the per-series Bloom rarely skips files (kept for the brief, FPR reported); **footer min/max time is the real pruning**, so compaction must keep file time ranges narrow. Leveled is a poor fit: keys are series-first and every L0 file spans all series, so each flush overlaps (and rewrites) all of L1. Plain size-tiered works if it merges only time-adjacent files. Size-tiered **inside time windows** (TWCS): 1 file per window per query range, lowest rewrite, clean tombstone cleanup when a window becomes one file. General tombstone-drop rule (correct for any strategy): drop only if no live file outside the compaction could hold a point it hides.
+- **Outcome:** leaning to time windows (fixed 1 h windows first, growing windows → design doc); pending confirmation of window size and merge threshold.
+
+### 38. Must late points go to their own window (must flush split by window)?
+- **Answer:** Not for correctness (read rule + general tombstone-drop rule keep answers right either way), only for efficiency. Cassandra's TWCS does not split; a file is placed in the window of its max timestamp, so one late point stretches the file's range (worse time pruning), its old window can never become one file, and tombstones there may never be droppable; Cassandra documents that TWCS handles out-of-order writes badly. Splitting keeps every file inside one window at the cost of extra small files. Middle ground: split only points more than one window late. Very late points re-open closed windows; limit re-compaction of closed windows (≥ 2 files and periodic).
+- **Outcome:** pending choice: always split vs split only very late points.
+
 ### Tooling
 - A prototype dump tool (outside this repo) printed SSTable / WAL / series.log / MANIFEST files as text (`--hex` for raw bytes) and showed a cut WAL record as "replay stops here". The engine ships the same as `tsdb-dump` (`src/tsdb/tools/dump.py`).
 
