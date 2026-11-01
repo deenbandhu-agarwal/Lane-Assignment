@@ -82,16 +82,19 @@ class WalWriter:
 
     def switch_segment(self, new_segment: WalSegment) -> WalSegment:
         """Called by WalSet.rotate_all() under swap_lock.exclusive(). Returns the old segment."""
-        raise NotImplementedError
+        old, self._segment = self._segment, new_segment
+        return old
 
     def set_apply(self, apply: ApplyFn) -> None:
-        """Point at the new active memtable after a swap."""
-        raise NotImplementedError
+        """Point at the new active memtable after a swap (also under swap_lock.exclusive())."""
+        self._apply = apply
 
     def stop(self) -> None:
-        self._queue.put(_STOP)
         if self._thread is not None:
+            self._queue.put(_STOP)
             self._thread.join()
+            self._thread = None
+        self._segment.close()
 
     def _run(self) -> None:
         while True:

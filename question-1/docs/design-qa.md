@@ -205,6 +205,11 @@ Legend — **Outcome:** `decision` (changed the design) · `clarified` (no desig
   - Is N > 1 WALs needed? With group commit, 1 WAL at ~2 ms per fsync covers 100K points/s with ~200 points per fsync (estimate, not measured).
 - **Outcome:** decision: **default `wal_count = 1`**; D1 (visible seq, ~20 lines; with N = 1 it equals the last applied seq) kept as a safety net for N > 1; D2 and D3 as above; `max_immutable_memtables = 1`. Benchmark measures 1 vs 2 vs 4 WALs before any default change.
 
+### 46. In which order must series.log and the WAL be fsynced?
+- **Answer:** series.log FIRST. If the WAL fsync lands but series.log does not: after a crash series.log knows ids 1–6 while the WAL holds a record for id 7; a new series then gets id 7, and after a second crash replay would put the old orphan record into the new series 7. With series.log synced before the WAL fsync of the same group, a durable WAL record never names an unknown id. The WAL writer calls `catalog.sync()` right before its own fsync; one extra fsync only when the group created a new series.
+- Also decided while building it: series.log records are `id u32 | JSON [metric, [[k, v], ...]]` inside the WAL frame (no un-escape parser needed); a cut tail is truncated before new appends (else new records hide behind garbage); a failed fsync fails the group and every later write and is never retried; a delete spanning several WALs is split so each copy names only its own WAL's series (each copy gets that WAL's seq, which is all Rule 1 needs since a series lives in one WAL).
+- **Outcome:** decision (series.log fsync before WAL fsync). Tested in `test_wal_writer.py`, `test_series_catalog.py`, `test_wal_set.py`.
+
 ### Tooling
 - A prototype dump tool (outside this repo) printed SSTable / WAL / series.log / MANIFEST files as text (`--hex` for raw bytes) and showed a cut WAL record as "replay stops here". The engine ships the same as `tsdb-dump` (`src/tsdb/tools/dump.py`).
 
