@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from tsdb.errors import CorruptFileError
 from tsdb.faults import NoFaults
 from tsdb.model import Point, TimeWindow, Tombstone
 from tsdb.sstable.bloom import BloomFilterFactory
@@ -78,3 +79,56 @@ def test_points_and_tombstones_come_back_exactly_as_written(tmp_path):
     assert (reader.min_ts, reader.max_ts) == (T_10_00, T_10_00 + 59 * SECOND)   # tombstones count too
     assert reader.size_bytes == path.stat().st_size
     reader.close()
+
+
+def damage(path: Path, at: int) -> None:
+    data = bytearray(path.read_bytes())
+    data[at] ^= 0x01
+    path.write_bytes(bytes(data))
+
+
+@pytest.fixture
+def example_file(tmp_path):
+    tables = factory(tmp_path)
+    return tables, write(tables, WINDOW_10_00, 1, STEP2_POINTS)
+
+
+def test_a_wrong_magic_at_the_end_is_refused(example_file):
+    tables, path = example_file
+    damage(path, path.stat().st_size - 1)
+
+    with pytest.raises(CorruptFileError, match="magic"):
+        tables.open_reader(path, WINDOW_10_00)
+
+
+def test_one_flipped_bit_in_the_footer_is_refused(example_file):
+    tables, path = example_file
+    damage(path, path.stat().st_size - 74 + 3)          # inside the index offset
+
+    with pytest.raises(CorruptFileError, match="checksum"):
+        tables.open_reader(path, WINDOW_10_00)
+
+
+def test_one_flipped_bit_in_the_tail_is_refused_at_open(example_file):
+    tables, path = example_file
+    damage(path, 172 + 6)                                # a Bloom bits byte (Bloom block at 172)
+
+    with pytest.raises(CorruptFileError, match="checksum"):
+        tables.open_reader(path, WINDOW_10_00)
+
+
+def test_one_flipped_bit_in_a_data_block_is_refused_when_that_block_is_read(example_file):
+    tables, path = example_file
+    damage(path, 8 + 4 + 27)                             # value of the first point (block 0 at 8)
+    reader = tables.open_reader(path, WINDOW_10_00)      # tail is fine, so open works
+
+    with pytest.raises(CorruptFileError, match="checksum"):
+        list(reader.iter_all())
+
+
+def test_a_file_cut_short_is_refused(example_file):
+    tables, path = example_file
+    path.write_bytes(path.read_bytes()[:100])
+
+    with pytest.raises(CorruptFileError):
+        tables.open_reader(path, WINDOW_10_00)

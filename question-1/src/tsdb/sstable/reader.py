@@ -8,9 +8,11 @@ engine.version reference counting.
 
 from __future__ import annotations
 
+import zlib
 from collections.abc import Iterator
 from pathlib import Path
 
+from tsdb.errors import CorruptFileError
 from tsdb.model import Point, SeriesId, TimeWindow, Timestamp, Tombstone
 from tsdb.ports import FileOps, MembershipFilter, MembershipFilterFactory
 from tsdb.sstable.format import (BLOCK_COUNT, CRC, ENTRY, FOOTER_SIZE, INDEX_ENTRY, TOMBSTONE_HEAD, Footer,
@@ -101,7 +103,9 @@ class SSTableReader:
 
 
 def _body(block: bytes) -> bytes:
-    """Block without its trailing crc32."""
+    """Block without its trailing crc32, after checking that crc32."""
+    if len(block) < CRC.size or zlib.crc32(block[:-CRC.size]) != CRC.unpack_from(block, len(block) - CRC.size)[0]:
+        raise CorruptFileError("block checksum mismatch")
     return block[:-CRC.size]
 
 
