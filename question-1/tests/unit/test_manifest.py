@@ -35,3 +35,40 @@ def test_a_committed_state_loads_back_unchanged_even_in_a_new_process(tmp_path):
     store(tmp_path).commit(STATE_V4)
 
     assert store(tmp_path).load() == STATE_V4
+
+
+class StopAt:
+    """Fake fault injector: raises at one crash point, like the process dying there."""
+
+    def __init__(self, point: str) -> None:
+        self.point = point
+
+    def hit(self, point: str) -> None:
+        if point == self.point:
+            raise SystemExit(f"crash at {point}")
+
+
+STATE_V5 = ManifestState(version=5, next_file_no=9, last_flushed_seq=14, wal_count=4, wal_segment=4,
+                         newest_data_ts=1_730_372_520_000,
+                         windows=((TimeWindow(SIX_HOURS, T_06_00), ("000006.sst", "000008.sst")),))
+
+
+def test_a_crash_between_writing_the_tmp_file_and_the_rename_keeps_the_old_state(tmp_path):
+    store(tmp_path).commit(STATE_V4)
+
+    with pytest.raises(SystemExit):
+        store(tmp_path, StopAt("manifest_update")).commit(STATE_V5)
+
+    assert (tmp_path / "MANIFEST.tmp").exists()            # the new state was written ...
+    assert store(tmp_path).load() == STATE_V4              # ... but never became visible
+
+
+def test_the_next_commit_after_a_crash_works_and_replaces_the_leftover_tmp(tmp_path):
+    store(tmp_path).commit(STATE_V4)
+    with pytest.raises(SystemExit):
+        store(tmp_path, StopAt("manifest_update")).commit(STATE_V5)
+
+    store(tmp_path).commit(STATE_V5)
+
+    assert store(tmp_path).load() == STATE_V5
+    assert not (tmp_path / "MANIFEST.tmp").exists()
