@@ -5,7 +5,8 @@ import pytest
 
 from tsdb.model import Point, Tombstone
 from tsdb.model import Aggregation
-from tsdb.query.aggregate import AGGREGATORS, BucketAggregator
+from tsdb.errors import ValidationError
+from tsdb.query.aggregate import AGGREGATORS, BucketAggregator, parse_bucket
 from tsdb.query.merge import merge_series
 
 T_10_00 = 1_730_368_800_000
@@ -109,3 +110,16 @@ def test_each_aggregation_over_3_1_4_1_5(name, expected):
 
 def test_every_api_aggregation_name_has_an_aggregator():
     assert set(AGGREGATORS) == set(Aggregation)
+
+
+@pytest.mark.parametrize("text, ms", [
+    ("500ms", 500), ("10s", 10_000), ("1m", 60_000), ("5m", 300_000), ("1h", 3_600_000), ("1d", 86_400_000),
+])
+def test_bucket_text_becomes_milliseconds(text, ms):
+    assert parse_bucket(text) == ms
+
+
+@pytest.mark.parametrize("text", ["", "0s", "5x", "-1m", "1.5h", "m", "10 s", "1M"])
+def test_bad_bucket_text_is_a_validation_error(text):
+    with pytest.raises(ValidationError):
+        parse_bucket(text)

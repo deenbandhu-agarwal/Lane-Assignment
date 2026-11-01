@@ -7,8 +7,11 @@ Adding p99 or last = one class + one registry entry; no other code changes.
 
 from __future__ import annotations
 
+import re
+
 from collections.abc import Iterator, Mapping
 
+from tsdb.errors import ValidationError
 from tsdb.model import Aggregation, Point
 from tsdb.ports import AggregatorFactory
 
@@ -79,9 +82,16 @@ AGGREGATORS: Mapping[Aggregation, AggregatorFactory] = {
 }
 
 
+_BUCKET = re.compile(r"([0-9]+)(ms|s|m|h|d)")
+_UNIT_MS = {"ms": 1, "s": 1_000, "m": 60_000, "h": 3_600_000, "d": 86_400_000}
+
+
 def parse_bucket(text: str) -> int:
     """'500ms' | '10s' | '1m' | '5m' | '1h' | '1d' -> milliseconds. Raises ValidationError."""
-    raise NotImplementedError
+    match = _BUCKET.fullmatch(text)
+    if not match or int(match[1]) == 0:
+        raise ValidationError(f"bad bucket {text!r}: use a positive whole number + ms|s|m|h|d, e.g. '5m'")
+    return int(match[1]) * _UNIT_MS[match[2]]
 
 
 def bucket_start(timestamp: int, bucket_ms: int) -> int:
