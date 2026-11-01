@@ -48,3 +48,44 @@ def test_s1_data_flushed_by_the_background_thread_is_still_read(tmp_path):
         assert result.stats["tables_in_range"] >= 1
     finally:
         d.close()
+
+
+def test_s2_after_close_and_reopen_every_answer_is_the_same(tmp_path):
+    """Half the data in tables (flushed), half only in the WAL; a series created after the flush."""
+    first = build_database(EngineConfig(data_dir=tmp_path))
+    first.write([(DELHI, T, 30.0), (MUMBAI, T, 28.0)])
+    first.run_maintenance_until_idle()
+    first.write([(DELHI, T + MINUTE, 32.0), (DELHI, T, 31.0)])          # overwrite of T, WAL only
+    pune = SeriesKey.of("temperature", {"city": "Pune", "sensor": "roof"})
+    first.write([(pune, T, 25.0)])
+    first.close()
+
+    again = build_database(EngineConfig(data_dir=tmp_path))
+    try:
+        assert answer(again.query("temperature", None, T, T + MINUTE, None, None)) == {
+            DELHI: [(T, 31.0), (T + MINUTE, 32.0)], MUMBAI: [(T, 28.0)], pune: [(T, 25.0)]}
+        again.write([(DELHI, T, 35.0)])              # wins only if seq continues above the old ones
+        assert answer(again.query("temperature", "city=Delhi", T, T + MINUTE, None, None)) == {
+            DELHI: [(T, 35.0), (T + MINUTE, 32.0)]}
+    finally:
+        again.close()
+
+
+def test_s3_delete_by_filter_hides_old_points_in_range_and_a_later_write_is_visible(tmp_path):
+    d = build_database(EngineConfig(data_dir=tmp_path))
+    try:
+        d.write([(MUMBAI, T, 28.0), (MUMBAI, T + MINUTE, 29.0), (MUMBAI, T + 2 * MINUTE, 30.0),
+                 (DELHI, T, 31.0)])
+        d.run_maintenance_until_idle()                               # the old points are in a table
+
+        assert d.delete("temperature", "city=Mumbai", T, T + MINUTE) == 1
+        d.write([(MUMBAI, T, 40.0)])                                 # after the delete: visible
+
+        everything = d.query("temperature", None, T, T + 2 * MINUTE, None, None)
+        assert answer(everything) == {MUMBAI: [(T, 40.0), (T + 2 * MINUTE, 30.0)], DELHI: [(T, 31.0)]}
+        d.run_maintenance_until_idle()                               # tombstone flushed + compacted
+        assert answer(d.query("temperature", None, T, T + 2 * MINUTE, None, None)) == answer(everything)
+        assert d.list_series("temperature", "city=Mumbai").series == [MUMBAI]   # still listed (#41)
+        assert d.delete("temperature", "city=Chennai", T, T) == 0
+    finally:
+        d.close()
