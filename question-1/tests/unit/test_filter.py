@@ -1,8 +1,10 @@
-"""Tag filter language (seams 1-4). Filters F1-F8 are from docs/api-contract.md."""
+"""Tag filter language (seams 1-4) and the real inverted index (seam I1).
+Filters F1-F8 are from docs/api-contract.md."""
 
 import pytest
 
 from tsdb.errors import FilterSyntaxError
+from tsdb.catalog.inverted_index import InvertedIndex
 from tsdb.model import SeriesKey
 from tsdb.query.filter import And, Eq, NotEq, Or, evaluate, parse
 
@@ -80,12 +82,28 @@ class FakePostings:
         return len(self.postings(tag_key, tag_value))
 
 
-CPU = FakePostings({
+def build_inverted_index(series):
+    index = InvertedIndex()
+    for series_id, key in series.items():
+        index.add(series_id, key)
+    return index
+
+
+# Every evaluate test runs on the fake AND on the real index: both must give the same answers.
+POSTING_SOURCES = {"fake": FakePostings, "inverted_index": build_inverted_index}
+
+
+@pytest.fixture(params=sorted(POSTING_SOURCES))
+def build(request):
+    return lambda series: POSTING_SOURCES[request.param](dict(series))
+
+
+CPU_SERIES = {
     4: SeriesKey.of("cpu", {"region": "us-east", "service": "api"}),            # no host tag
     1: SeriesKey.of("cpu", {"host": "h1", "region": "us-east", "service": "api"}),
     3: SeriesKey.of("cpu", {"host": "h3", "region": "eu", "service": "db"}),
     2: SeriesKey.of("cpu", {"host": "h2", "region": "us-west", "service": "api"}),
-})
+}
 
 
 @pytest.mark.parametrize("name, text, ids", [
@@ -97,16 +115,16 @@ CPU = FakePostings({
     ("F6", "host!=h1", [2, 3, 4]),               # 4 has no host tag and still matches
     ("none", "host=h9", []),
 ])
-def test_filters_select_the_right_series_sorted_ascending(name, text, ids):
-    assert evaluate(parse(text), CPU, "cpu") == ids
+def test_filters_select_the_right_series_sorted_ascending(build, name, text, ids):
+    assert evaluate(parse(text), build(CPU_SERIES), "cpu") == ids
 
 
-def test_no_filter_means_every_series_of_the_metric():
-    assert evaluate(None, CPU, "cpu") == [1, 2, 3, 4]
+def test_no_filter_means_every_series_of_the_metric(build):
+    assert evaluate(None, build(CPU_SERIES), "cpu") == [1, 2, 3, 4]
 
 
-def test_results_never_leak_from_another_metric_with_the_same_tags():
-    both = FakePostings({
+def test_results_never_leak_from_another_metric_with_the_same_tags(build):
+    both = build({
         1: SeriesKey.of("cpu", {"host": "h1"}),
         2: SeriesKey.of("cpu", {"host": "h2"}),
         5: SeriesKey.of("mem", {"host": "h1"}),
