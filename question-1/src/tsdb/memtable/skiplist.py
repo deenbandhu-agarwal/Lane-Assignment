@@ -40,19 +40,42 @@ class SkipList:
         self._len = 0
 
     def insert(self, key: OrderedKey, value: float) -> None:
-        raise NotImplementedError
+        """Caller guarantees ONE writer at a time and unique keys."""
+        preds = self._find_predecessors(key)
+        height = self._random_height()
+        node = _Node(key, value, height)
+        for level in range(height):                 # 1. node fully built before anyone sees it
+            node.next[level] = preds[level].next[level]
+        for level in range(height):                 # 2. publish bottom level first
+            preds[level].next[level] = node
+        self._level = max(self._level, height)
+        self._len += 1
 
     def iter_from(self, key: OrderedKey) -> Iterator[tuple[OrderedKey, float]]:
         raise NotImplementedError
 
     def __iter__(self) -> Iterator[tuple[OrderedKey, float]]:
-        raise NotImplementedError
+        node = self._head.next[0]
+        while node is not None:
+            yield node.key, node.value
+            node = node.next[0]
 
     def __len__(self) -> int:
         return self._len
 
     def _random_height(self) -> int:
-        raise NotImplementedError
+        height = 1
+        while height < self._max_level and self._rng.random() < self._p:
+            height += 1
+        return height
 
     def _find_predecessors(self, key: OrderedKey) -> list[_Node]:
-        raise NotImplementedError
+        """For every level, the last node whose key < `key` (head if none)."""
+        preds = [self._head] * self._max_level
+        node = self._head
+        for level in range(self._level - 1, -1, -1):   # levels above _level: pred is head
+            nxt = node.next[level]
+            while nxt is not None and nxt.key < key:
+                node, nxt = nxt, nxt.next[level]
+            preds[level] = node
+        return preds
