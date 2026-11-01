@@ -75,10 +75,11 @@ class TimeWindow:
         return self.start_ms + self.size_ms - 1
 
     def contains(self, timestamp: Timestamp) -> bool:
-        raise NotImplementedError
+        return self.start_ms <= timestamp <= self.end_ms
 
     def overlaps(self, from_ts: Timestamp, to_ts: Timestamp) -> bool:
-        raise NotImplementedError
+        """[from_ts, to_ts] is inclusive on both ends, like the query range."""
+        return from_ts <= self.end_ms and to_ts >= self.start_ms
 
     def parent(self, bigger_size_ms: int) -> "TimeWindow":
         raise NotImplementedError
