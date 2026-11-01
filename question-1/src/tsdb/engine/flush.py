@@ -26,8 +26,11 @@ from tsdb.ports import FaultInjector, FileOps, ManifestPort, MemtableFactory, Me
 def split_by_window(points: list[Point], tombstones: list[Tombstone],
                     window_ms: int) -> dict[TimeWindow, tuple[list[Point], list[Tombstone]]]:
     """Pure: group points by their smallest window and clip tombstones into every window they cover.
-    Order inside each group stays (series_id, timestamp)."""
-    raise NotImplementedError
+    Order inside each group stays (series_id, timestamp). Windows come out in time order."""
+    groups: dict[TimeWindow, tuple[list[Point], list[Tombstone]]] = {}
+    for p in points:
+        groups.setdefault(TimeWindow.containing(p.timestamp, window_ms), ([], []))[0].append(p)
+    return dict(sorted(groups.items()))
 
 
 class Flusher:
