@@ -7,6 +7,7 @@ and bootstrap injects EnvFaults, which SIGKILLs the process there, exactly like 
 
 from __future__ import annotations
 
+import os
 from enum import Enum
 
 
@@ -33,7 +34,10 @@ class EnvFaults:
 
     @staticmethod
     def from_env() -> "NoFaults | EnvFaults":
-        raise NotImplementedError
+        crash_at = os.environ.get("TSDB_CRASH_AT")
+        if not crash_at:
+            return NoFaults()
+        raise NotImplementedError("crash harness: designed before the crash tests")
 
     def hit(self, point: str) -> None:
         raise NotImplementedError

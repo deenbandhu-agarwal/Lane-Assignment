@@ -37,6 +37,8 @@ class BackgroundWorker:
         self._compact_wake = threading.Event()
         self._room = threading.Condition()
         self._stop = threading.Event()
+        self._flush_mutex = threading.Lock()         # swap + flush, one at a time, in memtable order
+        self._compact_mutex = threading.Lock()       # pick + run: two runners must never take one job
         self._threads: list[threading.Thread] = []
 
     def start(self) -> None:
@@ -64,10 +66,9 @@ class BackgroundWorker:
 
     def run_until_idle(self) -> None:
         """Test/benchmark hook: flush everything, then compact until the policy returns None."""
-        if self._versions.current().active.max_seq > 0:
-            self._flush_now()
-        while (job := self._policy.pick(self._versions.current())) is not None:
-            self._compactor.run(job)
+        self._flush_if(lambda v: v.active.max_seq > 0)
+        while self._compact_one():
+            pass
 
     def stop(self) -> None:
         self._stop.set()
@@ -81,15 +82,25 @@ class BackgroundWorker:
         while not self._stop.is_set():
             self._flush_wake.wait(timeout=_RECHECK_S)
             self._flush_wake.clear()
-            if not self._stop.is_set() and self._should_flush(self._versions.current()):
-                self._flush_now()
+            if not self._stop.is_set():
+                self._flush_if(self._should_flush)
 
     def _compaction_loop(self) -> None:
         while not self._stop.is_set():
             self._compact_wake.wait(timeout=_RECHECK_S)
             self._compact_wake.clear()
-            while not self._stop.is_set() and (job := self._policy.pick(self._versions.current())):
-                self._compactor.run(job)
+            while not self._stop.is_set() and self._compact_one():
+                pass
+
+    def _compact_one(self) -> bool:
+        """Pick and run under one lock: run_until_idle and the compaction thread could otherwise both
+        pick the same job, and the second would read inputs the first already deleted."""
+        with self._compact_mutex:
+            job = self._policy.pick(self._versions.current())
+            if job is None:
+                return False
+            self._compactor.run(job)
+            return True
 
     def _should_flush(self, version) -> bool:
         """Full, OR its oldest window is closed (data time): old data must not live only in RAM + WAL.
@@ -104,9 +115,14 @@ class BackgroundWorker:
         newest = max(active.max_timestamp, version.newest_data_ts)
         return oldest.is_closed(newest, grace_ms=self._smallest_window_ms)
 
-    def _flush_now(self) -> None:
-        frozen = self._flusher.swap_memtable()
-        self._flusher.flush(frozen)
+    def _flush_if(self, needed) -> None:
+        """Re-check under the lock: another runner may have flushed while we waited. Swap and flush
+        stay together so memtables reach disk in swap order (flush relies on it, design-qa #44)."""
+        with self._flush_mutex:
+            if not needed(self._versions.current()):
+                return
+            frozen = self._flusher.swap_memtable()
+            self._flusher.flush(frozen)
         with self._room:
             self._room.notify_all()
         self._compact_wake.set()

@@ -15,13 +15,36 @@ from __future__ import annotations
 import random
 from collections.abc import Callable, Mapping
 
+from tsdb.catalog.inverted_index import InvertedIndex
+from tsdb.catalog.series_catalog import SeriesCatalog
+from tsdb.compaction.compactor import Compactor
 from tsdb.compaction.policy import CompactionPolicy, TimeWindowPolicy
 from tsdb.config import EngineConfig
+from tsdb.engine.background import BackgroundWorker
 from tsdb.engine.database import Database
+from tsdb.engine.flush import Flusher
+from tsdb.engine.recovery import Recovery
+from tsdb.engine.routing import SingleShardRouter
+from tsdb.engine.seq import SequenceCounter
 from tsdb.engine.shard import Shard
+from tsdb.engine.state import LiveState
+from tsdb.engine.swap_lock import SwapLock
+from tsdb.engine.version import Version, VersionSet
+from tsdb.faults import EnvFaults
+from tsdb.memtable.memtable import Memtable
 from tsdb.memtable.skiplist import SkipList
-from tsdb.ports import FaultInjector, FileOps, MemtableFactory, OrderedStore
+from tsdb.ports import FaultInjector, FileOps, MemtableFactory, OrderedStore, TableReader
+from tsdb.query.aggregate import AGGREGATORS
+from tsdb.query.executor import QueryExecutor
+from tsdb.query.filter import parse
+from tsdb.sstable.bloom import BloomFilterFactory
+from tsdb.sstable.factory import SSTableFactory
+from tsdb.storage.fileio import OsFileOps
 from tsdb.storage.layout import ShardLayout
+from tsdb.storage.manifest import ManifestStore
+from tsdb.wal.routing import HashWalRouter
+from tsdb.wal.wal_set import WalReplayer, WalSet, new_segment
+from tsdb.wal.writer import WalWriter
 
 OrderedStoreFactory = Callable[[random.Random, EngineConfig], OrderedStore]
 
@@ -36,27 +59,61 @@ COMPACTION_POLICIES: Mapping[str, Callable[[EngineConfig], CompactionPolicy]] = 
 
 
 def memtable_factory(config: EngineConfig) -> MemtableFactory:
-    """Returns a zero-arg factory producing Memtable(ORDERED_STORES[config.memtable_structure](...))."""
-    raise NotImplementedError
+    """Zero-arg factory producing Memtable(ORDERED_STORES[config.memtable_structure](...))."""
+    rng = random.Random(config.skiplist_seed)
+    new_store = ORDERED_STORES[config.memtable_structure]
+    return lambda: Memtable(new_store(rng, config), config.memtable_max_bytes,
+                            config.memtable_entry_bytes, config.memtable_max_entries)
 
 
 def build_shard(config: EngineConfig, layout: ShardLayout, files: FileOps, faults: FaultInjector) -> Shard:
-    """Wire one shard, in dependency order:
-        InvertedIndex -> SeriesCatalog(on_new_series=index.add)
-        ManifestStore, SSTableFactory(BloomFilterFactory)
-        Recovery(...).run() -> RecoveredState
-        SequenceCounter(last_seq), SwapLock() -> WalWriters(seq, swap_lock) -> WalSet(HashWalRouter)
-        VersionSet(initial Version) -> Flusher(swap_lock, smallest window), Compactor,
-        COMPACTION_POLICIES[config.compaction_policy](config)
-            -> BackgroundWorker(max_immutable_memtables): flush thread + compaction thread
-        executor factory (snapshot -> QueryExecutor(AGGREGATORS, limits))
-        Shard(...)
-    """
-    raise NotImplementedError
+    """Wire one shard, in dependency order (recovery first: everything else starts from its result).
+    The returned shard is running: WAL writer threads and the two background threads are started."""
+    for wal in range(config.wal_count):
+        files.make_dirs(layout.wal_segment(wal, 0).parent)
+    index = InvertedIndex()
+    catalog = SeriesCatalog(layout.series_log, files, on_new_series=index.add)
+    manifest = ManifestStore(layout.manifest, files, faults)
+    tables = SSTableFactory(layout.sstable, files, faults, BloomFilterFactory(),
+                            config.block_target_bytes, config.bloom_false_positive_rate)
+    new_memtable = memtable_factory(config)
+    recovered = Recovery(layout, manifest, catalog, tables, WalReplayer(files, layout.wal_segment).replay,
+                         new_memtable, files, config.wal_count).run()
+
+    seq = SequenceCounter(recovered.last_seq)
+    swap_lock = SwapLock()
+    writers = [WalWriter(i, new_segment(layout.wal_segment(i, recovered.active_segment), files), seq,
+                         swap_lock, recovered.memtable.apply, before_fsync=catalog.sync, faults=faults)
+               for i in range(config.wal_count)]
+    wal = WalSet(writers, HashWalRouter(config.wal_count), layout.wal_segment, files)
+
+    def on_obsolete(table: TableReader) -> None:
+        table.close()
+        files.remove(layout.sstable(table.window, int(table.name[:6])))
+
+    versions = VersionSet(Version(0, recovered.memtable, (), recovered.windows,
+                                  recovered.manifest.newest_data_ts), on_obsolete)
+    state = LiveState(manifest, versions, recovered.manifest, recovered.active_segment)
+    smallest = config.window_steps_ms[0]
+    background = BackgroundWorker(
+        versions, Flusher(versions, wal, state, tables, new_memtable, files, faults, swap_lock, smallest),
+        Compactor(versions, state, tables, faults), COMPACTION_POLICIES[config.compaction_policy](config),
+        config.max_immutable_memtables, smallest)
+    new_executor = lambda snapshot: QueryExecutor(snapshot, catalog, AGGREGATORS,
+                                                  config.max_query_series, config.max_query_points)
+    for writer in writers:
+        writer.start()
+    background.start()
+    return Shard(catalog, index, wal, versions, seq, background, new_executor)
 
 
 def build_database(config: EngineConfig, files: FileOps | None = None,
                    faults: FaultInjector | None = None) -> Database:
     """Defaults: OsFileOps, EnvFaults.from_env() (NoFaults unless TSDB_CRASH_AT is set),
     SingleShardRouter, filter.parse."""
-    raise NotImplementedError
+    files = files or OsFileOps()
+    faults = faults or EnvFaults.from_env()
+    router = SingleShardRouter()
+    shards = [build_shard(config, ShardLayout(config.data_dir / f"shard-{i}"), files, faults)
+              for i in router.all_shards()]
+    return Database(shards, router, parse)
