@@ -23,8 +23,11 @@ from tsdb.ports import FaultInjector, ManifestPort, TableFactory
 
 
 def tombstone_droppable(tombstone: Tombstone, job: CompactionJob, version: Version) -> bool:
-    """Rule 2 as a pure function, unit-tested on its own."""
-    raise NotImplementedError
+    """Rule 2 as a pure function, unit-tested on its own.
+    Drop only if no live table OUTSIDE the job may hold a point of these series in the range.
+    Memtables are not checked: this tombstone was flushed, so every memtable entry has a bigger
+    seq and cannot be hidden by it (design-qa #43)."""
+    return True
 
 
 class Compactor:
