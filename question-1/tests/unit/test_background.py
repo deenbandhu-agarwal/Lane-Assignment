@@ -93,3 +93,34 @@ def test_b1_run_until_idle_flushes_everything_then_compacts_until_nothing_is_lef
     assert e.files() == ["000003.sst"]                   # 2 files in one window (threshold 2) -> merged
     assert list(e.versions.current().windows[0][1][0].iter_all()) == [Point(1, T + 1, 1, 1.0),
                                                                      Point(1, T + 2, 2, 2.0)]
+
+
+@pytest.fixture
+def roomy(tmp_path):
+    e = Engine(tmp_path)                                   # never full
+    e.worker.start()
+    yield e
+    e.worker.stop()
+
+
+def test_b2_a_memtable_whose_oldest_window_is_closed_is_flushed_even_if_not_full(roomy):
+    # oldest window 10:00 ends 10:00:59.999; grace 1 min -> closed once newest data > 10:01:59.999
+    roomy.write(Point(1, T, 1, 30.1), Point(1, T + 2 * MINUTE, 2, 31.0))
+
+    assert eventually(lambda: roomy.files() != [])
+
+
+def test_b2_no_flush_while_the_oldest_window_can_still_get_writes(roomy):
+    roomy.write(Point(1, T, 1, 30.1), Point(1, T + 2 * MINUTE - 1, 2, 31.0))   # exactly end + grace
+
+    assert not eventually(lambda: roomy.files() != [], timeout=0.3)
+
+
+def test_b2_a_memtable_of_only_late_points_is_flushed_when_flushed_data_is_already_newer(roomy):
+    roomy.write(Point(1, T + 10 * MINUTE, 1, 1.0), Point(1, T + 13 * MINUTE, 2, 2.0))   # closes 10:10
+    assert eventually(lambda: roomy.files() != [])
+    before = roomy.files()
+
+    roomy.write(Point(2, T, 3, 9.9))                       # late point for 10:00; memtable's own newest = 10:00
+
+    assert eventually(lambda: len(roomy.files()) > len(before))

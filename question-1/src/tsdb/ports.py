@@ -80,6 +80,7 @@ class MemtablePort(Protocol):
 
     max_seq: Seq
     max_timestamp: Timestamp       # newest data time seen (window closing)
+    min_timestamp: Timestamp | None  # oldest point time (None = no points): flush when its window closes
 
     def apply(self, entries: list[Point | Tombstone]) -> None: ...
     def freeze(self) -> None: ...

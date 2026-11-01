@@ -21,6 +21,7 @@ from tsdb.compaction.compactor import Compactor
 from tsdb.compaction.policy import CompactionPolicy
 from tsdb.engine.flush import Flusher
 from tsdb.engine.version import VersionSet
+from tsdb.model import TimeWindow
 
 
 class BackgroundWorker:
@@ -72,7 +73,7 @@ class BackgroundWorker:
         while not self._stop.is_set():
             self._flush_wake.wait(timeout=_RECHECK_S)
             self._flush_wake.clear()
-            if not self._stop.is_set() and self._should_flush(self._versions.current().active):
+            if not self._stop.is_set() and self._should_flush(self._versions.current()):
                 self._flush_now()
 
     def _compaction_loop(self) -> None:
@@ -82,8 +83,18 @@ class BackgroundWorker:
             while not self._stop.is_set() and (job := self._policy.pick(self._versions.current())):
                 self._compactor.run(job)
 
-    def _should_flush(self, active) -> bool:
-        return active.is_full()
+    def _should_flush(self, version) -> bool:
+        """Full, OR its oldest window is closed (data time): old data must not live only in RAM + WAL.
+        Newest data time = max(this memtable, already flushed): a memtable of only late points
+        must still be flushed."""
+        active = version.active
+        if active.is_full():
+            return True
+        if active.min_timestamp is None:
+            return False
+        oldest = TimeWindow.containing(active.min_timestamp, self._smallest_window_ms)
+        newest = max(active.max_timestamp, version.newest_data_ts)
+        return oldest.is_closed(newest, grace_ms=self._smallest_window_ms)
 
     def _flush_now(self) -> None:
         frozen = self._flusher.swap_memtable()

@@ -30,6 +30,7 @@ class Memtable:
         self._frozen = False
         self.max_seq: Seq = 0
         self.max_timestamp: Timestamp = 0     # newest data time seen
+        self.min_timestamp: Timestamp | None = None   # oldest point time (window closing)
 
     def apply(self, entries: list[Point | Tombstone]) -> None:
         """Entries arrive in seq order (one WAL batch). max_timestamp follows POINTS only: a delete
@@ -44,6 +45,8 @@ class Memtable:
                 else:
                     self._store.insert((e.series_id, e.timestamp, -e.seq), e.value)
                     self.max_timestamp = max(self.max_timestamp, e.timestamp)
+                    if self.min_timestamp is None or e.timestamp < self.min_timestamp:
+                        self.min_timestamp = e.timestamp
                 self.max_seq = max(self.max_seq, e.seq)
             self._entries += len(entries)
 
