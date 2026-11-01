@@ -51,3 +51,24 @@ def test_a_delete_is_visible_only_to_snapshots_taken_after_it(mem):
     assert mem.tombstones_for(3, snapshot_seq=9) == []
     assert mem.tombstones_for(3, snapshot_seq=10) == [DELETE_MUMBAI]
     assert mem.tombstones_for(1, snapshot_seq=10) == []
+
+
+def test_flush_gets_only_the_newest_version_of_each_point_in_key_order(mem):
+    assert list(mem.iter_for_flush()) == [
+        Point(1, T_10_00, 9, 29.9),      # seq 1 (30.1) dropped: last write wins
+        Point(1, T_10_01, 4, 30.4),
+        Point(1, T_10_02, 7, 31.0),
+        Point(2, T_10_00, 2, 28.0),
+        Point(2, T_10_01, 8, 28.2),      # seq 5 (28.1) dropped
+        Point(3, T_10_00, 3, 32.5),      # still here: the delete is applied by readers, and the
+        Point(3, T_10_01, 6, 32.9),      # tombstone goes into the file next to these points
+    ]
+    assert mem.all_tombstones() == [DELETE_MUMBAI]
+
+
+def test_a_delete_over_several_series_is_listed_once_for_flush():
+    m = new_memtable()
+    both = Tombstone(11, (1, 2), T_10_00, T_10_02)
+    m.apply([both])
+
+    assert m.all_tombstones() == [both]

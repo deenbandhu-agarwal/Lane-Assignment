@@ -64,7 +64,12 @@ class Memtable:
 
     def iter_for_flush(self) -> Iterator[Point]:
         """Newest version per (series, timestamp) only -> 'last write wins' happens here."""
-        raise NotImplementedError
+        last = None
+        for (sid, ts, neg_seq), value in self._store:
+            if (sid, ts) != last:              # versions are newest first, so the first one wins
+                last = (sid, ts)
+                yield Point(sid, ts, -neg_seq, value)
 
     def all_tombstones(self) -> list[Tombstone]:
-        raise NotImplementedError
+        """Each tombstone once (one covering several series sits in several per-series lists)."""
+        return sorted({t for ts in self._tombstones.values() for t in ts}, key=lambda t: t.seq)
