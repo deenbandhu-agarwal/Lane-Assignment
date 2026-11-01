@@ -239,6 +239,16 @@ Legend — **Outcome:** `decision` (changed the design) · `clarified` (no desig
 - **Also tried and ruled out:** memory reordering on ARM (a lock as a barrier between build and publish did not help).
 - **Outcome:** both fixed; the stress test passed 5/5 runs after the fix.
 
+### 53. Does fsync really reach the disk on macOS?
+- **Answer:** No. Python has no `fdatasync` on macOS, and `os.fsync` there only pushes data to the drive, which may keep it in its own cache (lost on a power cut). Only `fcntl(F_FULLFSYNC)` flushes that cache. Measured on the dev Mac: `os.fsync` 0.03 ms, `F_FULLFSYNC` 3.7 ms per call (200 calls, 4 KB each). Found because the first benchmark gave 315K points/s, too fast for real fsyncs.
+- **Outcome:** fixed: `OsFileOps.fsync` uses `F_FULLFSYNC` on macOS and `fdatasync` on Linux (Docker). The first benchmark numbers were thrown away.
+
+### 54. Benchmark: do more WALs help? (measured)
+- **Answer:** No, on this machine they make writes slower. 8 writer threads, 100-point batches, real fsync, 2 runs of 5 s: 1 WAL ≈ 66–71K points/s (p99 27 ms), 2 WALs ≈ 51–53K, 4 WALs ≈ 28K. Group commit puts ~400 points in one fsync with 1 WAL; with 4 WALs each fsync carries ~100, and the fsyncs do not run in parallel (`F_FULLFSYNC` flushes the whole drive). Even with the weak fsync, 4 WALs were no faster (315K for 1, 2 and 4 WALs): all WALs apply into one memtable with one write lock.
+- **Correction to #45:** the estimate there ("1 WAL at ~2 ms per fsync covers ~100K points/s") was too high for this machine: the measured value is ~70K points/s at 3.7 ms per fsync.
+- Reads (1,000 series × 6 h, compacted): 1 series raw for 1 h is 0.8 ms (1 table, 6 skipped by time, 4 blocks); `avg` per 5 min over 333 series for 1 h is ~135 ms. Bloom false-positive rate measured 1.00% for a 1% target.
+- **Outcome:** keep `wal_count = 1`. More WALs pay off only where fsyncs really run in parallel (e.g. NVMe on Linux) AND the memtable is split per WAL; both are future work. Raw numbers: `bench/results.md` (`uv run python bench/run.py`).
+
 ### Tooling
 - A prototype dump tool (outside this repo) printed SSTable / WAL / series.log / MANIFEST files as text (`--hex` for raw bytes) and showed a cut WAL record as "replay stops here". The engine ships the same as `tsdb-dump` (`src/tsdb/tools/dump.py`).
 

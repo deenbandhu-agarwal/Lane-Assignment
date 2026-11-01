@@ -2,12 +2,14 @@
 
 Rule used everywhere: write X.tmp -> fsync(X.tmp) -> rename(X.tmp, X) -> fsync(directory).
 A reader then sees the old X or the new X, never half of one.
-fsync uses fdatasync where available. A failed fsync raises FatalStorageError (never retried).
+fsync = fdatasync on Linux, F_FULLFSYNC on macOS (plain fsync there stops at the drive cache). A failed fsync raises FatalStorageError (never retried).
 """
 
 from __future__ import annotations
 
+import fcntl
 import os
+import sys
 from pathlib import Path
 
 from tsdb.errors import FatalStorageError
@@ -23,8 +25,13 @@ class OsFileOps:
             view = view[os.write(fd, view):]
 
     def fsync(self, fd: int) -> None:
+        """Linux: fdatasync. macOS: F_FULLFSYNC, because plain fsync there leaves the data in the
+        drive's cache (lost on a power cut; measured 0.03 ms vs 3.7 ms per call, design-qa #53)."""
         try:
-            (getattr(os, "fdatasync", None) or os.fsync)(fd)
+            if sys.platform == "darwin":
+                fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
+            else:
+                (getattr(os, "fdatasync", None) or os.fsync)(fd)
         except OSError as e:          # never retry: the page cache state is unknown after a failure
             raise FatalStorageError(f"fsync failed: {e}") from e
 
