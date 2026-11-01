@@ -109,3 +109,14 @@ def test_q4_stats_show_files_skipped_by_time_and_by_filter_and_blocks_read(snaps
                                 "tables_skipped_by_filter": 0, "blocks_read": 1}
     assert absent_series.stats == {"tables_in_range": 2, "tables_skipped_by_time": 0,
                                    "tables_skipped_by_filter": 2, "blocks_read": 0}   # Pune: no file opened
+
+
+def test_q5_list_series_gives_keys_in_id_order_even_for_a_series_whose_points_are_all_deleted(snapshot):
+    listed = executor(snapshot).list_series([1, 2, 3])
+
+    assert listed.series == [KEYS[1], KEYS[2], KEYS[3]]      # #41: a series exists even when its data is gone
+
+
+def test_q5_list_series_respects_the_series_limit(snapshot):
+    with pytest.raises(QueryLimitError):
+        executor(snapshot, max_series=2).list_series([1, 2, 3])

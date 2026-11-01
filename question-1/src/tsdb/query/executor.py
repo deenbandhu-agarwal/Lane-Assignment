@@ -55,9 +55,7 @@ class QueryExecutor:
 
     def run(self, series_ids: list[SeriesId], from_ts: Timestamp, to_ts: Timestamp,
             agg: Aggregation | None, bucket_ms: int | None) -> QueryResult:
-        if len(series_ids) > self._max_series:
-            raise QueryLimitError(f"query matches {len(series_ids)} series, limit is {self._max_series}; "
-                                  "narrow the filter")
+        self._check_series_limit(series_ids)
         version, seq = self._snapshot.version, self._snapshot.seq
         self._points_read = 0
         memtables = (version.active, *version.immutables)
@@ -97,4 +95,11 @@ class QueryExecutor:
             yield p
 
     def list_series(self, series_ids: list[SeriesId]) -> SeriesListResult:
-        raise NotImplementedError
+        """Catalog only: a series exists even when every point of it is deleted (design-qa #41)."""
+        self._check_series_limit(series_ids)
+        return SeriesListResult([self._series.key_of(i) for i in series_ids])
+
+    def _check_series_limit(self, series_ids: list[SeriesId]) -> None:
+        if len(series_ids) > self._max_series:
+            raise QueryLimitError(f"query matches {len(series_ids)} series, limit is {self._max_series}; "
+                                  "narrow the filter")
