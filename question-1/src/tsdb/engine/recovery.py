@@ -52,7 +52,7 @@ class Recovery:
         state = self._manifest.load() or ManifestState(version=0, next_file_no=1, last_flushed_seq=0,
                                                        wal_count=self._wal_count, wal_segment=1)
         self._series.load()
-        removed = self._remove_flushed_segments(state.wal_segment)
+        removed = self._remove_flushed_segments(state.wal_segment) + self._remove_orphans(state)
         windows = tuple((w, tuple(self._tables.open_reader(self._layout.sstable(w, int(n[:6])), w)
                                   for n in reversed(names)))            # newest first
                         for w, names in state.windows)
@@ -69,6 +69,23 @@ class Recovery:
                 segment += 1
         return RecoveredState(state, windows, memtable, last_seq, active_segment=newest_segment + 1,
                               removed_orphans=removed, replayed_records=replayed)
+
+    def _remove_orphans(self, state: ManifestState) -> list[Path]:
+        """*.tmp files (a write that never finished) and tables the MANIFEST does not list (a flush
+        or compaction that crashed before its commit). Walks sst/<size>/<start>/ via FileOps."""
+        live = {self._layout.sstable(w, int(n[:6])) for w, names in state.windows for n in names}
+        removed = []
+        manifest_tmp = self._layout.tmp_for(self._layout.manifest)
+        if manifest_tmp.exists():
+            self._files.remove(manifest_tmp)
+            removed.append(manifest_tmp)
+        for size_dir in self._files.list_dir(self._layout.root / "sst"):
+            for window_dir in self._files.list_dir(size_dir):
+                for path in self._files.list_dir(window_dir):
+                    if path not in live:
+                        self._files.remove(path)
+                        removed.append(path)
+        return removed
 
     def _remove_flushed_segments(self, first_live: int) -> list[Path]:
         """Segments below MANIFEST.wal_segment are already in tables (a crash between the MANIFEST

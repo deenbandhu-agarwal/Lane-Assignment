@@ -101,3 +101,21 @@ def test_r3_after_a_flush_files_come_from_the_manifest_and_only_newer_wal_segmen
     assert state.last_seq == 3
     assert not old.exists()                                          # already flushed: deleted
     assert state.active_segment == 3
+
+
+def test_r4_half_written_and_never_listed_files_are_deleted_and_listed_files_kept(tmp_path):
+    d = Dir(tmp_path)
+    live = d.table(1, [Point(1, T, 1, 30.1)])
+    unlisted = d.table(2, [Point(1, T, 2, 31.0)])                  # flush crashed before MANIFEST commit
+    half = live.with_name("000003.sst.tmp")
+    half.write_bytes(b"half a table")                              # flush crashed while writing
+    manifest_tmp = d.layout.manifest.with_name("MANIFEST.tmp")
+    d.manifest.commit(ManifestState(version=1, next_file_no=2, last_flushed_seq=1, wal_count=1, wal_segment=1,
+                                    newest_data_ts=T, windows=((W_10_00, ("000001.sst",)),)))
+    manifest_tmp.write_bytes(b"{ never renamed")
+
+    state = d.recover()
+
+    assert live.exists()
+    assert not unlisted.exists() and not half.exists() and not manifest_tmp.exists()
+    assert sorted(p.name for p in state.removed_orphans) == ["000002.sst", "000003.sst.tmp", "MANIFEST.tmp"]
