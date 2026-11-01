@@ -24,6 +24,7 @@ class Memtable:
         self._approx_bytes = 0
         self._frozen = False
         self.max_seq: Seq = 0
+        self.max_timestamp: Timestamp = 0     # newest data time seen
 
     def apply(self, entries: list[Point | Tombstone]) -> None:
         raise NotImplementedError

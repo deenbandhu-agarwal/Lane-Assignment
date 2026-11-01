@@ -26,7 +26,7 @@ class BackgroundWorker:
         raise NotImplementedError
 
     def wake(self) -> None:
-        """Called when a memtable becomes full or a flush adds an L0 table."""
+        """Called when a memtable becomes full or a flush adds tables, or newest data time closes a window."""
         raise NotImplementedError
 
     def run_until_idle(self) -> None:

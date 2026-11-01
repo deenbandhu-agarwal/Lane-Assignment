@@ -6,6 +6,8 @@
     4. open live tables (footer, tail, checksums)
     5. replay WAL segments of every WAL into a new memtable; truncate cut tails
     6. seq = max(MANIFEST.last_flushed_seq, highest replayed seq)
+    7. newest data time = max(MANIFEST.newest_data_ts, replayed timestamps), so window closing
+       continues exactly where it stopped
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from tsdb.model import ManifestState
+from tsdb.model import ManifestState, TimeWindow
 from tsdb.ports import FileOps, ManifestPort, MemtableFactory, MemtablePort, SeriesResolver, TableFactory, TableReader
 from tsdb.wal.record import DecodedRecord
 
@@ -24,7 +26,7 @@ ReplayFn = Callable[[int, int], Iterator[DecodedRecord]]     # (wal_count, from_
 @dataclass(slots=True)
 class RecoveredState:
     manifest: ManifestState
-    levels: tuple[tuple[TableReader, ...], ...]
+    windows: tuple[tuple[TimeWindow, tuple[TableReader, ...]], ...]
     memtable: MemtablePort
     last_seq: int
     removed_orphans: list[Path] = field(default_factory=list)

@@ -49,6 +49,52 @@ class Tombstone:
     def hides(self, series_id: SeriesId, timestamp: Timestamp, seq: Seq) -> bool:
         raise NotImplementedError
 
+    def clip(self, window: "TimeWindow") -> "Tombstone | None":
+        """The piece of this tombstone inside `window` (None if no overlap). Flush cuts every
+        tombstone at window edges so each window's files carry their own part of the delete."""
+        raise NotImplementedError
+
+
+@dataclass(frozen=True, slots=True, order=True)
+class TimeWindow:
+    """[start, start + size) aligned to the epoch. Every SSTable belongs to exactly one window.
+    Window sizes are steps (e.g. 1 h -> 6 h -> 1 day), each a multiple of the previous, so windows
+    nest exactly: every small window lies inside exactly one window of each bigger step."""
+
+    size_ms: int
+    start_ms: Timestamp
+
+    @staticmethod
+    def containing(timestamp: Timestamp, size_ms: int) -> "TimeWindow":
+        """start = timestamp - (timestamp mod size)."""
+        raise NotImplementedError
+
+    @property
+    def end_ms(self) -> Timestamp:
+        """Last millisecond inside the window (inclusive)."""
+        raise NotImplementedError
+
+    def contains(self, timestamp: Timestamp) -> bool:
+        raise NotImplementedError
+
+    def overlaps(self, from_ts: Timestamp, to_ts: Timestamp) -> bool:
+        raise NotImplementedError
+
+    def parent(self, bigger_size_ms: int) -> "TimeWindow":
+        raise NotImplementedError
+
+    def children(self, smaller_size_ms: int) -> list["TimeWindow"]:
+        raise NotImplementedError
+
+    def is_closed(self, newest_data_ts: Timestamp, grace_ms: int) -> bool:
+        """Closed when the newest DATA timestamp written is past end + grace (grace = one smallest
+        window). Uses data time, not wall clock: deterministic tests, past timestamps work."""
+        raise NotImplementedError
+
+    def label(self) -> str:
+        """Directory name: '<size_ms>/<start_ms>' (dump tool prints it human-readable)."""
+        raise NotImplementedError
+
 
 @dataclass(frozen=True, slots=True)
 class ManifestState:
@@ -59,7 +105,8 @@ class ManifestState:
     last_flushed_seq: int                 # every seq <= this is inside some SSTable
     wal_count: int                        # N; must not change without migration (routing)
     wal_segment: int                      # current segment number, shared by all N WALs
-    levels: tuple[tuple[str, ...], ...] = ()   # levels[n] = file names (L0 newest first)
+    newest_data_ts: Timestamp = 0         # newest timestamp ever flushed (drives window closing)
+    windows: tuple[tuple[TimeWindow, tuple[str, ...]], ...] = ()   # window -> live file names
 
 
 class Aggregation(str, Enum):

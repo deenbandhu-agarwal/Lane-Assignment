@@ -4,7 +4,7 @@ Everything else receives its collaborators through its constructor and depends o
 To swap an implementation, change it here (or add a registry entry + config value):
 
     ORDERED_STORES["rbtree"] = lambda rng, cfg: RedBlackTree()       # skip list -> RB tree
-    COMPACTION_POLICIES["leveled"] = LeveledPolicy                    # new strategy
+    COMPACTION_POLICIES["leveled"] = lambda cfg: LeveledPolicy(...)   # another strategy
     shard router -> ConsistentHashRouter(...)                         # multi-node later
 
 Tests call `build_database(config, files=FailingFsyncOps(), faults=...)` to inject fakes.
@@ -15,7 +15,7 @@ from __future__ import annotations
 import random
 from collections.abc import Callable, Mapping
 
-from tsdb.compaction.policy import CompactionPolicy, SizeTieredPolicy
+from tsdb.compaction.policy import CompactionPolicy, TimeWindowPolicy
 from tsdb.config import EngineConfig
 from tsdb.engine.database import Database
 from tsdb.engine.shard import Shard
@@ -30,7 +30,8 @@ ORDERED_STORES: Mapping[str, OrderedStoreFactory] = {
     "skiplist": lambda rng, cfg: SkipList(rng, cfg.skiplist_max_level, cfg.skiplist_p),
 }
 COMPACTION_POLICIES: Mapping[str, Callable[[EngineConfig], CompactionPolicy]] = {
-    "size_tiered": lambda cfg: SizeTieredPolicy(),
+    "time_window": lambda cfg: TimeWindowPolicy(cfg.window_steps_ms, cfg.window_merge_threshold,
+                                                cfg.late_merge_ratio, cfg.late_merge_interval_ms),
 }
 
 
@@ -45,7 +46,8 @@ def build_shard(config: EngineConfig, layout: ShardLayout, files: FileOps, fault
         ManifestStore, SSTableFactory(BloomFilterFactory)
         Recovery(...).run() -> RecoveredState
         SequenceCounter(last_seq) -> WalWriters -> WalSet(HashWalRouter)
-        VersionSet(initial Version) -> Flusher, Compactor, policy -> BackgroundWorker
+        VersionSet(initial Version) -> Flusher(smallest window), Compactor,
+        COMPACTION_POLICIES[config.compaction_policy](config) -> BackgroundWorker
         executor factory (snapshot -> QueryExecutor(AGGREGATORS, limits))
         Shard(...)
     """

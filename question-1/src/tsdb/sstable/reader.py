@@ -11,14 +11,14 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
-from tsdb.model import Point, SeriesId, Timestamp, Tombstone
+from tsdb.model import Point, SeriesId, TimeWindow, Timestamp, Tombstone
 from tsdb.ports import FileOps, MembershipFilterFactory
 
 
 class SSTableReader:
-    def __init__(self, path: Path, level: int, files: FileOps, filters: MembershipFilterFactory) -> None:
+    def __init__(self, path: Path, window: TimeWindow, files: FileOps, filters: MembershipFilterFactory) -> None:
         self._path = path
-        self._level = level
+        self._window = window
         self._files = files
         self._filters = filters
 
@@ -31,8 +31,20 @@ class SSTableReader:
         return self._path.name
 
     @property
-    def level(self) -> int:
-        return self._level
+    def window(self) -> TimeWindow:
+        return self._window
+
+    @property
+    def min_ts(self) -> Timestamp:
+        raise NotImplementedError
+
+    @property
+    def max_ts(self) -> Timestamp:
+        raise NotImplementedError
+
+    @property
+    def size_bytes(self) -> int:
+        raise NotImplementedError
 
     def may_contain(self, series_id: SeriesId, from_ts: Timestamp, to_ts: Timestamp) -> bool:
         """Footer min/max (series and time), then the membership filter. False = surely not here."""

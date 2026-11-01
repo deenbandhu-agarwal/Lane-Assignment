@@ -1,6 +1,7 @@
 """Consistent snapshots for readers while writes, flushes and compactions run.
 
-A Version is an immutable picture: (active memtable, immutable memtables, tables per level).
+A Version is an immutable picture: (active memtable, immutable memtables, tables per time window,
+newest data time).
 Flush and compaction never change a Version; they build a new one and `install` it.
 
     snap = versions.acquire(seq)   # Version + snapshot seq, refcount +1
@@ -18,7 +19,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from tsdb.model import Seq
+from tsdb.model import Seq, TimeWindow, Timestamp
 from tsdb.ports import MemtablePort, TableReader
 
 
@@ -27,7 +28,15 @@ class Version:
     number: int
     active: MemtablePort
     immutables: tuple[MemtablePort, ...]                 # newest first, being flushed
-    levels: tuple[tuple[TableReader, ...], ...]          # levels[0] = L0 newest first
+    windows: tuple[tuple[TimeWindow, tuple[TableReader, ...]], ...]   # sorted by start; files newest first
+    newest_data_ts: Timestamp                            # max(flushed, memtables): drives window closing
+
+    def tables_overlapping(self, from_ts: Timestamp, to_ts: Timestamp) -> list[TableReader]:
+        """Tables whose window overlaps [from, to]: the first, cheapest pruning step of a read."""
+        raise NotImplementedError
+
+    def tables_in(self, window: TimeWindow) -> tuple[TableReader, ...]:
+        raise NotImplementedError
 
 
 @dataclass(frozen=True, slots=True)

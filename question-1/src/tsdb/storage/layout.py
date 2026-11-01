@@ -5,13 +5,15 @@
       MANIFEST                 live files, wal_count, segment number, last seq
       series.log               series id <-> series key (append-only, framed records)
       wal/<i>/<segment>.log    WAL i of N, one segment per memtable
-      sst/L<n>/<file_no>.sst   immutable sorted tables
+      sst/<size_ms>/<start_ms>/<file_no>.sst   immutable sorted tables, one time window each
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+
+from tsdb.model import TimeWindow
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,7 +31,7 @@ class ShardLayout:
     def wal_segment(self, wal_index: int, segment: int) -> Path:
         raise NotImplementedError
 
-    def sstable(self, level: int, file_no: int) -> Path:
+    def sstable(self, window: TimeWindow, file_no: int) -> Path:
         raise NotImplementedError
 
     def tmp_for(self, final_path: Path) -> Path:

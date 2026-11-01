@@ -12,7 +12,7 @@ class EngineConfig:
 
     # implementations (names looked up in tsdb.bootstrap registries)
     memtable_structure: str = "skiplist"
-    compaction_policy: str = "size_tiered"
+    compaction_policy: str = "time_window"
 
     # memtable
     memtable_max_bytes: int = 64 * 1024 * 1024
@@ -28,8 +28,12 @@ class EngineConfig:
     wal_count: int = 1                    # N WAL files; series -> WAL by stable hash % N
     fsync: bool = True                    # False only for the memtable-only benchmark
 
-    # compaction / tombstones
-    tombstone_compact_bytes: int = 1024 * 1024   # compact a file early above this
+    # compaction: size-tiered inside growing time windows
+    window_steps_ms: tuple[int, ...] = (3_600_000, 21_600_000, 86_400_000)   # 1 h -> 6 h -> 1 day
+    window_merge_threshold: int = 4          # merge a window's files when it has this many
+    late_merge_ratio: float = 0.10           # merge late files into a big window at 10% of its size...
+    late_merge_interval_ms: int = 86_400_000 # ...or at least once per day (data time)
+    tombstone_compact_bytes: int = 1024 * 1024   # compact a window early if its tombstones exceed this
 
     # query limits (guard memory; exceeded -> 400)
     max_query_series: int = 10_000

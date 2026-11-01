@@ -1,4 +1,4 @@
-"""Merge-on-read for ONE series across all sources (memtables + SSTables of every level).
+"""Merge-on-read for ONE series across all sources (memtables + SSTables of every time window in range).
 
     sources  : iterators of Point, each in (timestamp asc, seq desc) order, already limited to the
                snapshot seq and [from, to]
