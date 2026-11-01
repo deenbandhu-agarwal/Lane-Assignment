@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from tsdb.faults import NoFaults
-from tsdb.model import Point, TimeWindow
+from tsdb.model import Point, TimeWindow, Tombstone
 from tsdb.sstable.bloom import BloomFilterFactory
 from tsdb.sstable.factory import SSTableFactory
 from tsdb.storage.fileio import OsFileOps
@@ -54,3 +54,27 @@ def test_the_example_file_is_written_byte_for_byte_up_to_the_footer(tmp_path):
     assert data[:-74] == EXAMPLE_000001_WITHOUT_FOOTER
     assert len(data) == len(EXAMPLE_000001_WITHOUT_FOOTER) + 74
     assert data[-4:] == b"TSST"
+
+
+SECOND = 1_000
+# 4 series x 10 seconds = 40 points; with 2 entries per block that is 20 blocks
+MANY_POINTS = [Point(sid, T_10_00 + s * SECOND, seq=sid * 100 + s, value=sid + s / 10)
+               for sid in (1, 2, 5, 9) for s in range(10)]
+DELETE_2_AND_9 = Tombstone(seq=500, series_ids=(2, 9), from_ts=T_10_00 + 3 * SECOND, to_ts=T_10_00 + 5 * SECOND)
+DELETE_7_ONLY = Tombstone(seq=501, series_ids=(7,), from_ts=T_10_00 + 50 * SECOND, to_ts=T_10_00 + 59 * SECOND)
+
+
+def test_points_and_tombstones_come_back_exactly_as_written(tmp_path):
+    tables = factory(tmp_path)
+    path = write(tables, WINDOW_10_00, 2, MANY_POINTS, [DELETE_2_AND_9, DELETE_7_ONLY])
+
+    reader = tables.open_reader(path, WINDOW_10_00)
+
+    assert list(reader.iter_all()) == MANY_POINTS
+    assert reader.all_tombstones() == [DELETE_2_AND_9, DELETE_7_ONLY]
+    assert reader.tombstones_for(2) == [DELETE_2_AND_9]
+    assert reader.tombstones_for(7) == [DELETE_7_ONLY]
+    assert reader.tombstones_for(1) == []
+    assert (reader.min_ts, reader.max_ts) == (T_10_00, T_10_00 + 59 * SECOND)   # tombstones count too
+    assert reader.size_bytes == path.stat().st_size
+    reader.close()

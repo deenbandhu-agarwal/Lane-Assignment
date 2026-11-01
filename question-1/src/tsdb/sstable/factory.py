@@ -37,4 +37,7 @@ class SSTableFactory:
         return final
 
     def open_reader(self, path: Path, window: TimeWindow) -> SSTableReader:
-        raise NotImplementedError
+        """Returns an OPENED reader (footer + tail loaded); raises CorruptFileError."""
+        reader = SSTableReader(path, window, self._files, self._filters)
+        reader.open()
+        return reader
