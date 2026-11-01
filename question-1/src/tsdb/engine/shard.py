@@ -3,7 +3,8 @@ its constructor (built by tsdb.bootstrap) and depends on ports, not concrete cla
 
     write  : series.get_or_create -> wal.write (group commit, fsync) -> 200
     delete : filter -> fixed series ids -> wal.delete (range tombstone)
-    read   : versions.acquire(seq.last) -> QueryExecutor -> versions.release
+    read   : versions.acquire(seq.visible) -> QueryExecutor -> versions.release   (never seq.last: #45)
+    write  waits in background.wait_for_room() first (backpressure, #45)
 Today the Database has exactly one shard; the class boundary is where multi-node sharding plugs in.
 """
 

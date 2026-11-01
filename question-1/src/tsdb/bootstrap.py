@@ -45,9 +45,10 @@ def build_shard(config: EngineConfig, layout: ShardLayout, files: FileOps, fault
         InvertedIndex -> SeriesCatalog(on_new_series=index.add)
         ManifestStore, SSTableFactory(BloomFilterFactory)
         Recovery(...).run() -> RecoveredState
-        SequenceCounter(last_seq) -> WalWriters -> WalSet(HashWalRouter)
-        VersionSet(initial Version) -> Flusher(smallest window), Compactor,
-        COMPACTION_POLICIES[config.compaction_policy](config) -> BackgroundWorker
+        SequenceCounter(last_seq), SwapLock() -> WalWriters(seq, swap_lock) -> WalSet(HashWalRouter)
+        VersionSet(initial Version) -> Flusher(swap_lock, smallest window), Compactor,
+        COMPACTION_POLICIES[config.compaction_policy](config)
+            -> BackgroundWorker(max_immutable_memtables): flush thread + compaction thread
         executor factory (snapshot -> QueryExecutor(AGGREGATORS, limits))
         Shard(...)
     """

@@ -2,11 +2,14 @@
 
 Loop:
     1. take everything waiting in the queue
+       --- swap_lock.shared() (design-qa #45, D2) ---
     2. give each entry the next seq (taken here, at append time, so seq rises inside this file)
     3. append all frames to the segment            -> faults.hit(WAL_APPEND)
     4. ONE fsync for the whole group (+ series.log via before_ack, if new series)
-    5. apply the entries to the memtable (callback)
-    6. complete every waiting ticket -> the HTTP handlers reply 200
+    5. apply the entries to the memtable (callback); seq.mark_applied(block)
+       --- release shared ---
+    6. seq.wait_until_visible(last seq of the group)  (D1: no reply before every older seq is visible)
+    7. complete every waiting ticket -> the HTTP handlers reply 200
 If fsync or apply fails: FatalStorageError -> the process stops; recovery replays the WAL.
 """
 
@@ -18,6 +21,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from tsdb.engine.seq import SequenceCounter
+from tsdb.engine.swap_lock import SwapLock
 from tsdb.model import Point, SeriesId, Timestamp, Tombstone
 from tsdb.ports import FaultInjector
 from tsdb.wal.segment import WalSegment
@@ -51,9 +55,10 @@ BeforeAckFn = Callable[[], None]
 
 
 class WalWriter:
-    def __init__(self, index: int, segment: WalSegment, seq: SequenceCounter, apply: ApplyFn,
-                 before_ack: BeforeAckFn, faults: FaultInjector) -> None:
+    def __init__(self, index: int, segment: WalSegment, seq: SequenceCounter, swap_lock: SwapLock,
+                 apply: ApplyFn, before_ack: BeforeAckFn, faults: FaultInjector) -> None:
         self._index = index
+        self._swap_lock = swap_lock
         self._segment = segment
         self._seq = seq
         self._apply = apply
@@ -69,7 +74,7 @@ class WalWriter:
         raise NotImplementedError
 
     def switch_segment(self, new_segment: WalSegment) -> WalSegment:
-        """Called by WalSet.rotate_all() while writers are paused. Returns the old segment."""
+        """Called by WalSet.rotate_all() under swap_lock.exclusive(). Returns the old segment."""
         raise NotImplementedError
 
     def set_apply(self, apply: ApplyFn) -> None:

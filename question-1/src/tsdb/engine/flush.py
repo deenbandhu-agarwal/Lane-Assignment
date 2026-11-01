@@ -6,7 +6,9 @@ produces 2+ tables. A delete piece for an older, bigger window (e.g. a 1-day fil
 delete-only table in that bigger window; compaction merges it like a late file.
 
 Order (each step is safe to crash after; README crash table):
-    1. swap: freeze active memtable, new memtable from factory, wal.rotate_all()  -> hit(MEMTABLE_FLUSH)
+    1. swap, under swap_lock.exclusive() (design-qa #45, D2): freeze active memtable, new memtable
+       from factory, wal.rotate_all(), install Version(new active, frozen as immutable)
+                                                                                 -> hit(MEMTABLE_FLUSH)
     2. walk the memtable once (newest version per key); route each point to the writer of its
        window (writers opened lazily); cut each tombstone into the windows that may hold older
        data: this flush's windows + live tables' windows (split_by_window, design-qa #44)    -> hit(SSTABLE_WRITE)
@@ -21,6 +23,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Iterable
 
+from tsdb.engine.swap_lock import SwapLock
 from tsdb.engine.version import VersionSet
 from tsdb.model import Point, TimeWindow, Tombstone
 from tsdb.ports import FaultInjector, FileOps, ManifestPort, MemtableFactory, MemtablePort, TableFactory, WalPort
@@ -50,7 +53,8 @@ def split_by_window(points: list[Point], tombstones: list[Tombstone], window_ms:
 class Flusher:
     def __init__(self, versions: VersionSet, wal: WalPort, manifest: ManifestPort, tables: TableFactory,
                  new_memtable: MemtableFactory, files: FileOps, faults: FaultInjector,
-                 smallest_window_ms: int) -> None:
+                 swap_lock: SwapLock, smallest_window_ms: int) -> None:
+        self._swap_lock = swap_lock
         self._versions = versions
         self._wal = wal
         self._manifest = manifest
