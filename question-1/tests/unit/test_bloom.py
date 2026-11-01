@@ -49,3 +49,15 @@ def test_a_filter_loaded_from_bytes_answers_like_the_one_that_wrote_them():
     for i in (1, 2, 3):
         written.add(i)
     assert [loaded.may_contain(i) for i in range(1, 200)] == [written.may_contain(i) for i in range(1, 200)]
+
+
+def test_measured_false_positive_rate_is_close_to_the_1_percent_target():
+    """Ids 1..10,000 added (sequential, as the catalog assigns them); 100,000 ids that are surely
+    absent (20,001..120,000) checked. README reports the measured number."""
+    bloom = BloomFilterFactory().new(10_000, 0.01)
+    for i in range(1, 10_001):
+        bloom.add(i)
+
+    false_positives = sum(bloom.may_contain(i) for i in range(20_001, 120_001))
+
+    assert 0.005 <= false_positives / 100_000 <= 0.015, false_positives
