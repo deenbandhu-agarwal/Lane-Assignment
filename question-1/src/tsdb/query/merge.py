@@ -23,4 +23,5 @@ def merge_series(sources: Iterable[Iterator[Point]], tombstones: list[Tombstone]
         if point.timestamp == last_ts:
             continue                          # an older version of a timestamp already decided
         last_ts = point.timestamp
-        yield point
+        if not any(t.hides(point.series_id, point.timestamp, point.seq) for t in tombstones):
+            yield point                       # a hidden winner hides the whole timestamp
