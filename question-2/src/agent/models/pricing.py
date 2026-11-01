@@ -24,6 +24,11 @@ class Price:
 PRICES: dict[str, Price] = {
     # Fake model: arbitrary but non-zero, so cost-cap tests exercise real arithmetic.
     "fake": Price(input_per_mtok=1.0, output_per_mtok=4.0),
+    # gemini-3.5-flash is not on ai.google.dev/gemini-api/docs/pricing (checked 2026-11-01).
+    # Priced at the listed Gemini 3.6/3.8 Flash standard paid rate, the highest Flash rate
+    # listed, so the cost cap over- rather than under-estimates. Free tier actually costs $0.
+    "gemini-3.5-flash": Price(input_per_mtok=0.75, output_per_mtok=3.75),
+    "gemini-3.8-flash": Price(input_per_mtok=0.75, output_per_mtok=3.75),
 }
 
 

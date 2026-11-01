@@ -57,6 +57,11 @@ class RunResult:
     cost_usd: float
     messages: list[Message]
     trace_path: Path
+    turn_start: int = 0  # index in messages where this turn's user message is
+
+    @property
+    def turn_messages(self) -> list[Message]:
+        return self.messages[self.turn_start :]
 
 
 def run_with_timeout(fn: Callable[[], T], timeout_s: float) -> T:
@@ -116,6 +121,7 @@ class Agent:
         if self.system_prompt:
             messages.append(Message("system", self.system_prompt))
         messages += [*history, Message("user", user_input)]
+        turn_start = len(messages) - 1
         budget = Budget(self.limits, self.price)
         specs = self.tools.specs()
         write_tools = self.tools.write_tool_names()
@@ -142,7 +148,9 @@ class Agent:
                 cost_usd=budget.spent_usd,
                 answer=text,
             )
-            return RunResult(text, reason, step, budget.spent_usd, messages, tracer.path)
+            if reason is not StopReason.FINAL or text != answer:
+                messages.append(Message("assistant", text))  # what the user saw goes into memory
+            return RunResult(text, reason, step, budget.spent_usd, messages, tracer.path, turn_start)
 
         try:
             while step < self.limits.max_steps:
