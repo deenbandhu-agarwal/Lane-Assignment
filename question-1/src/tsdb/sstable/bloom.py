@@ -14,6 +14,9 @@ import struct
 import zlib
 
 
+_HEADER = struct.Struct("<IB")      # m_bits, k
+
+
 def _fnv1a(data: bytes) -> int:
     h = 0x811C9DC5
     for byte in data:
@@ -51,12 +54,14 @@ class BloomFilter:
         return [(h1 + i * h2) % self.m_bits for i in range(self.k)]
 
     def to_bytes(self) -> bytes:
-        raise NotImplementedError
+        """m u32 | k u8 | bits. The SSTable writer adds the block checksum."""
+        return _HEADER.pack(self.m_bits, self.k) + bytes(self._bits)
 
 
 class BloomFilterFactory:
     def new(self, expected_items: int, false_positive_rate: float) -> BloomFilter:
-        raise NotImplementedError
+        return BloomFilter(*BloomFilter.optimal_params(expected_items, false_positive_rate))
 
     def load(self, data: bytes) -> BloomFilter:
-        raise NotImplementedError
+        m_bits, k = _HEADER.unpack_from(data)
+        return BloomFilter(m_bits, k, bytearray(data[_HEADER.size:]))

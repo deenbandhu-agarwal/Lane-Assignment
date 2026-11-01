@@ -4,7 +4,7 @@ Golden values come from the walkthrough example (q1-example/make_example.py, sep
 step2 sst/1m/10.00/000001.sst Bloom block for series ids [1, 2, 3].
 """
 
-from tsdb.sstable.bloom import BloomFilter
+from tsdb.sstable.bloom import BloomFilter, BloomFilterFactory
 
 
 def test_sizing_for_10k_ids_at_1_percent():
@@ -26,3 +26,26 @@ def test_every_added_id_is_reported_as_maybe_present():
         bloom.add(i)
 
     assert all(bloom.may_contain(i) for i in ids)
+
+
+# Example Bloom block without its crc: m = 32 (u32) | k = 7 (u8) | 4 bytes of bits
+EXAMPLE_BLOOM_1_2_3 = bytes.fromhex("20000000" "07" "72d5ccb7")
+
+
+def test_ids_1_2_3_give_exactly_the_bits_in_the_example_file():
+    bloom = BloomFilterFactory().new(expected_items=3, false_positive_rate=0.01)
+    for i in (1, 2, 3):
+        bloom.add(i)
+
+    assert bloom.to_bytes() == EXAMPLE_BLOOM_1_2_3
+
+
+def test_a_filter_loaded_from_bytes_answers_like_the_one_that_wrote_them():
+    loaded = BloomFilterFactory().load(EXAMPLE_BLOOM_1_2_3)
+
+    assert (loaded.m_bits, loaded.k) == (32, 7)
+    assert all(loaded.may_contain(i) for i in (1, 2, 3))
+    written = BloomFilterFactory().new(3, 0.01)
+    for i in (1, 2, 3):
+        written.add(i)
+    assert [loaded.may_contain(i) for i in range(1, 200)] == [written.may_contain(i) for i in range(1, 200)]
