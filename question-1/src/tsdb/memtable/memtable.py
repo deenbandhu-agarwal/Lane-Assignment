@@ -15,10 +15,15 @@ from tsdb.model import Point, Seq, SeriesId, Timestamp, Tombstone
 from tsdb.ports import OrderedStore
 
 
+_NEWEST = -(2**63)        # smallest -seq: sorts before every version of a (series, ts)
+
+
 class Memtable:
-    def __init__(self, store: OrderedStore, max_bytes: int) -> None:
+    def __init__(self, store: OrderedStore, max_bytes: int, entry_bytes: int, max_entries: int) -> None:
         self._store = store
         self._max_bytes = max_bytes
+        self._entry_bytes = entry_bytes       # size estimate per entry (Python objects are not bytes)
+        self._max_entries = max_entries
         self._tombstones: dict[SeriesId, list[Tombstone]] = {}   # per-series lookup
         self._write_lock = threading.Lock()                      # one writer at a time
         self._approx_bytes = 0
@@ -27,7 +32,13 @@ class Memtable:
         self.max_timestamp: Timestamp = 0     # newest data time seen
 
     def apply(self, entries: list[Point | Tombstone]) -> None:
-        raise NotImplementedError
+        with self._write_lock:
+            for e in entries:
+                if isinstance(e, Tombstone):
+                    for series_id in e.series_ids:
+                        self._tombstones.setdefault(series_id, []).append(e)
+                else:
+                    self._store.insert((e.series_id, e.timestamp, -e.seq), e.value)
 
     def freeze(self) -> None:
         raise NotImplementedError
@@ -37,7 +48,16 @@ class Memtable:
 
     def read_series(self, series_id: SeriesId, from_ts: Timestamp, to_ts: Timestamp,
                     snapshot_seq: Seq) -> Iterator[Point]:
-        raise NotImplementedError
+        """Per timestamp, the newest version with seq <= snapshot_seq. Tombstones are NOT applied
+        here: the query merge applies them once across memtables and files (Rule 1)."""
+        last_ts = None
+        for (sid, ts, neg_seq), value in self._store.iter_from((series_id, from_ts, _NEWEST)):
+            if sid != series_id or ts > to_ts:
+                return
+            if ts == last_ts or -neg_seq > snapshot_seq:
+                continue                      # an older version of a ts already returned / too new
+            last_ts = ts
+            yield Point(sid, ts, -neg_seq, value)
 
     def tombstones_for(self, series_id: SeriesId, snapshot_seq: Seq) -> list[Tombstone]:
         raise NotImplementedError
