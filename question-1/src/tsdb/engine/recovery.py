@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from tsdb.model import ManifestState, TimeWindow
+from tsdb.storage.layout import ShardLayout
 from tsdb.ports import FileOps, ManifestPort, MemtableFactory, MemtablePort, SeriesResolver, TableFactory, TableReader
 from tsdb.wal.record import DecodedRecord
 
@@ -28,17 +29,17 @@ ReplayFn = Callable[[int, int], Iterator[DecodedRecord]]     # (wal_count, from_
 class RecoveredState:
     manifest: ManifestState
     windows: tuple[tuple[TimeWindow, tuple[TableReader, ...]], ...]
-    memtable: MemtablePort
+    memtable: MemtablePort                 # becomes the active memtable
     last_seq: int
+    active_segment: int                    # new writes go here: one past every segment on disk
     removed_orphans: list[Path] = field(default_factory=list)
     replayed_records: int = 0
-    truncated_wal_bytes: int = 0
 
 
 class Recovery:
-    def __init__(self, root: Path, manifest: ManifestPort, series: SeriesResolver, tables: TableFactory,
+    def __init__(self, layout: ShardLayout, manifest: ManifestPort, series: SeriesResolver, tables: TableFactory,
                  replay: ReplayFn, new_memtable: MemtableFactory, files: FileOps, wal_count: int) -> None:
-        self._root = root
+        self._layout = layout
         self._manifest = manifest
         self._series = series
         self._tables = tables
@@ -48,4 +49,19 @@ class Recovery:
         self._wal_count = wal_count
 
     def run(self) -> RecoveredState:
-        raise NotImplementedError
+        state = self._manifest.load() or ManifestState(version=0, next_file_no=1, last_flushed_seq=0,
+                                                       wal_count=self._wal_count, wal_segment=1)
+        self._series.load()
+        memtable = self._new_memtable()
+        last_seq, replayed, newest_segment = state.last_flushed_seq, 0, state.wal_segment - 1
+        for record in self._replay(self._wal_count, state.wal_segment):
+            memtable.apply([record.entry])
+            last_seq = max(last_seq, record.entry.seq)
+            replayed += 1
+        for wal in range(self._wal_count):
+            segment = state.wal_segment
+            while self._layout.wal_segment(wal, segment).exists():
+                newest_segment = max(newest_segment, segment)
+                segment += 1
+        return RecoveredState(state, (), memtable, last_seq, active_segment=newest_segment + 1,
+                              replayed_records=replayed)
