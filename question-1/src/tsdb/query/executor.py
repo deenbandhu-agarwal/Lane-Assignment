@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from tsdb.engine.version import Snapshot
 from tsdb.model import Aggregation, SeriesId, SeriesKey, Timestamp
 from tsdb.ports import AggregatorFactory, SeriesResolver
+from tsdb.query.aggregate import BucketAggregator
+from tsdb.query.merge import merge_series
 
 
 @dataclass(slots=True)
@@ -52,7 +54,25 @@ class QueryExecutor:
 
     def run(self, series_ids: list[SeriesId], from_ts: Timestamp, to_ts: Timestamp,
             agg: Aggregation | None, bucket_ms: int | None) -> QueryResult:
-        raise NotImplementedError
+        version, seq = self._snapshot.version, self._snapshot.seq
+        memtables = (version.active, *version.immutables)
+        tables = version.tables_overlapping(from_ts, to_ts)
+        cursors = [(t, t.cursor()) for t in tables]            # one forward-only cursor per table
+        result = QueryResult(series=[], agg=agg, bucket_ms=bucket_ms)
+        for series_id in series_ids:                           # ascending: cursors only move forward
+            tombstones = [t for m in memtables for t in m.tombstones_for(series_id, seq)]
+            tombstones += [t for table in tables for t in table.tombstones_for(series_id)]
+            sources = [m.read_series(series_id, from_ts, to_ts, seq) for m in memtables]
+            sources += [c.read_series(series_id, from_ts, to_ts) for t, c in cursors
+                        if t.may_contain(series_id, from_ts, to_ts)]
+            points = merge_series(sources, tombstones)
+            if agg is None:
+                values = [(p.timestamp, p.value) for p in points]
+            else:
+                values = BucketAggregator(self._aggregators[agg], bucket_ms, from_ts).run(points)
+            if values:
+                result.series.append(SeriesResult(self._series.key_of(series_id), values))
+        return result
 
     def list_series(self, series_ids: list[SeriesId]) -> SeriesListResult:
         raise NotImplementedError

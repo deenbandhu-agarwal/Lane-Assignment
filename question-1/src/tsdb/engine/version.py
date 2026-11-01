@@ -33,10 +33,10 @@ class Version:
 
     def tables_overlapping(self, from_ts: Timestamp, to_ts: Timestamp) -> list[TableReader]:
         """Tables whose window overlaps [from, to]: the first, cheapest pruning step of a read."""
-        raise NotImplementedError
+        return [t for w, tables in self.windows if w.overlaps(from_ts, to_ts) for t in tables]
 
     def tables_in(self, window: TimeWindow) -> tuple[TableReader, ...]:
-        raise NotImplementedError
+        return next((tables for w, tables in self.windows if w == window), ())
 
 
 @dataclass(frozen=True, slots=True)
