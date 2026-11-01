@@ -20,28 +20,44 @@ from tsdb.model import Seq
 class SequenceCounter:
     def __init__(self, last: Seq = 0) -> None:
         self._last = last
+        self._visible = last
+        self._applied_ahead: dict[Seq, int] = {}     # first -> n, applied but above `visible`
         self._lock = threading.Lock()
+        self._visible_changed = threading.Condition(self._lock)
 
     def next_block(self, n: int) -> Seq:
         """Reserve n consecutive numbers; return the first. They are IN FLIGHT until mark_applied."""
-        raise NotImplementedError
+        with self._lock:
+            first = self._last + 1
+            self._last += n
+            return first
 
     def mark_applied(self, first: Seq, n: int) -> None:
         """The block [first, first + n) is in the memtable; may raise `visible`."""
-        raise NotImplementedError
+        with self._lock:
+            self._applied_ahead[first] = n
+            while (size := self._applied_ahead.pop(self._visible + 1, None)) is not None:
+                self._visible += size
+            self._visible_changed.notify_all()
 
     @property
     def visible(self) -> Seq:
         """Every seq <= this is applied: the snapshot seq for a new query."""
-        raise NotImplementedError
+        with self._lock:
+            return self._visible
 
     def wait_until_visible(self, seq: Seq) -> None:
-        raise NotImplementedError
+        with self._lock:
+            self._visible_changed.wait_for(lambda: self._visible >= seq)
 
     def observe(self, seen: Seq) -> None:
-        raise NotImplementedError
+        """Recovery only (before any writer runs): nothing is in flight, so visible moves too."""
+        with self._lock:
+            if seen > self._last:
+                self._last = self._visible = seen
 
     @property
     def last(self) -> Seq:
         """Highest number handed out (MANIFEST / recovery). NOT a snapshot seq: use `visible`."""
-        raise NotImplementedError
+        with self._lock:
+            return self._last
