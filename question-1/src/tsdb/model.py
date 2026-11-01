@@ -52,7 +52,10 @@ class Tombstone:
     def clip(self, window: "TimeWindow") -> "Tombstone | None":
         """The piece of this tombstone inside `window` (None if no overlap). Flush cuts every
         tombstone at window edges so each window's files carry their own part of the delete."""
-        raise NotImplementedError
+        if not window.overlaps(self.from_ts, self.to_ts):
+            return None
+        return Tombstone(self.seq, self.series_ids,
+                         max(self.from_ts, window.start_ms), min(self.to_ts, window.end_ms))
 
 
 @dataclass(frozen=True, slots=True, order=True)

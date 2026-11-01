@@ -6,7 +6,7 @@ the way the code computes them.
 
 import pytest
 
-from tsdb.model import TimeWindow
+from tsdb.model import TimeWindow, Tombstone
 
 HOUR = 3_600_000
 
@@ -97,3 +97,28 @@ def test_window_closes_only_once_newest_data_is_past_its_end_plus_one_grace_wind
     assert not w.is_closed(T_10_37_12_345, grace_ms=HOUR)   # data still inside the window
     assert not w.is_closed(T_11_59_59_999, grace_ms=HOUR)   # exactly end + grace: still open
     assert w.is_closed(T_12_00_00_000, grace_ms=HOUR)       # one ms later: closed
+
+
+T_10_30_00_000 = 1_730_370_600_000
+T_12_15_00_000 = 1_730_376_900_000
+T_13_00_00_000 = 1_730_379_600_000
+
+
+def test_a_delete_spanning_three_windows_is_cut_into_one_piece_per_window():
+    delete = Tombstone(seq=42, series_ids=(3, 7), from_ts=T_10_30_00_000, to_ts=T_12_15_00_000)
+
+    pieces = [delete.clip(TimeWindow(HOUR, start))
+              for start in (T_10_00_00_000, T_11_00_00_000, T_12_00_00_000)]
+
+    assert pieces == [
+        Tombstone(42, (3, 7), T_10_30_00_000, T_10_59_59_999),
+        Tombstone(42, (3, 7), T_11_00_00_000, T_11_59_59_999),
+        Tombstone(42, (3, 7), T_12_00_00_000, T_12_15_00_000),
+    ]
+
+
+def test_clipping_to_a_window_the_delete_does_not_touch_gives_nothing():
+    delete = Tombstone(seq=42, series_ids=(3, 7), from_ts=T_10_30_00_000, to_ts=T_12_15_00_000)
+
+    assert delete.clip(TimeWindow(HOUR, T_09_00_00_000)) is None
+    assert delete.clip(TimeWindow(HOUR, T_13_00_00_000)) is None
