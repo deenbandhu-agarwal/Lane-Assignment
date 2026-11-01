@@ -1,0 +1,6 @@
+# docker compose run --rm --build test  -> whole offline test suite (no network)
+services:
+  test:
+    build: .
+    command: ["uv", "run", "--frozen", "--no-sync", "pytest", "-q"]
+    network_mode: none

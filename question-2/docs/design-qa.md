@@ -10,7 +10,8 @@ Legend. **Outcome:** `decision` (changed the design) · `clarified` (no design c
 ## Stack
 
 ### 1. Same Python as Q1 (free-threaded 3.14t)?
-- **Answer:** No. Q2 is network-bound and sequential, so it gains nothing from no-GIL threads. `fastembed` depends on `onnxruntime`, which likely has no free-threaded 3.14t build (to be confirmed). Each question has its own lockfile and Dockerfile, so different versions are fine.
+- **Answer:** No. Q2 is network-bound and sequential, so it gains nothing from no-GIL threads. Each question has its own lockfile and Dockerfile, so different versions are fine.
+- **Correction (checked on PyPI):** the first reason given was "`onnxruntime` has no 3.14t build". Wrong: `onnxruntime` 1.31.1 ships cp314t wheels. The real blocker is `fastembed`'s dependency `py-rust-stemmers` 0.1.8, which has no cp314t wheel, so it would need a Rust toolchain to build from source.
 - **Outcome:** decision. Python 3.13 (regular build) + uv + Docker.
 
 ### 2. What are embeddings, and local or paid API?
