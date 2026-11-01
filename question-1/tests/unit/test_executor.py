@@ -99,3 +99,13 @@ def test_q3_too_many_points_is_refused(snapshot):
 def test_q3_the_point_limit_counts_points_read_even_when_aggregated(snapshot):
     with pytest.raises(QueryLimitError, match="points"):
         executor(snapshot, max_points=3).run([1, 3], T, T + 3 * MINUTE, agg=Aggregation.COUNT, bucket_ms=None)
+
+
+def test_q4_stats_show_files_skipped_by_time_and_by_filter_and_blocks_read(snapshot):
+    only_10_00 = executor(snapshot).run([1], T, T + MINUTE - 1, agg=None, bucket_ms=None)
+    absent_series = executor(snapshot).run([2], T, T + 3 * MINUTE, agg=None, bucket_ms=None)
+
+    assert only_10_00.stats == {"tables_in_range": 1, "tables_skipped_by_time": 1,
+                                "tables_skipped_by_filter": 0, "blocks_read": 1}
+    assert absent_series.stats == {"tables_in_range": 2, "tables_skipped_by_time": 0,
+                                   "tables_skipped_by_filter": 2, "blocks_read": 0}   # Pune: no file opened

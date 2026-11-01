@@ -62,14 +62,19 @@ class QueryExecutor:
         self._points_read = 0
         memtables = (version.active, *version.immutables)
         tables = version.tables_overlapping(from_ts, to_ts)
+        all_tables = sum(len(ts) for _, ts in version.windows)
+        filter_skips = 0
         cursors = [(t, t.cursor()) for t in tables]            # one forward-only cursor per table
         result = QueryResult(series=[], agg=agg, bucket_ms=bucket_ms)
         for series_id in series_ids:                           # ascending: cursors only move forward
             tombstones = [t for m in memtables for t in m.tombstones_for(series_id, seq)]
             tombstones += [t for table in tables for t in table.tombstones_for(series_id)]
             sources = [m.read_series(series_id, from_ts, to_ts, seq) for m in memtables]
-            sources += [c.read_series(series_id, from_ts, to_ts) for t, c in cursors
-                        if t.may_contain(series_id, from_ts, to_ts)]
+            for table, cursor in cursors:
+                if table.may_contain(series_id, from_ts, to_ts):
+                    sources.append(cursor.read_series(series_id, from_ts, to_ts))
+                else:
+                    filter_skips += 1
             points = self._count(merge_series(sources, tombstones))
             if agg is None:
                 values = [(p.timestamp, p.value) for p in points]
@@ -77,6 +82,9 @@ class QueryExecutor:
                 values = BucketAggregator(self._aggregators[agg], bucket_ms, from_ts).run(points)
             if values:
                 result.series.append(SeriesResult(self._series.key_of(series_id), values))
+        result.stats = {"tables_in_range": len(tables), "tables_skipped_by_time": all_tables - len(tables),
+                        "tables_skipped_by_filter": filter_skips,
+                        "blocks_read": sum(c.blocks_read for _, c in cursors)}
         return result
 
     def _count(self, points):
