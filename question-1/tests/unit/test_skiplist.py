@@ -34,3 +34,30 @@ def test_two_versions_of_one_point_are_both_kept_newest_first(store):
 
     assert list(store) == [((3, 1_730_368_800_000, -7), 33.0),
                            ((3, 1_730_368_800_000, -3), 32.5)]
+
+
+T0 = 1_730_368_800_000          # 10:00
+T1 = 1_730_368_860_000          # 10:01
+T2 = 1_730_368_920_000          # 10:02
+FIVE = [(1, T0, -1), (1, T1, -4), (2, T0, -2), (3, T0, -10), (3, T0, -3)]
+
+
+@pytest.fixture
+def five(store):
+    for k in reversed(FIVE):
+        store.insert(k, 0.0)
+    return store
+
+
+def test_iter_from_an_existing_key_starts_at_that_key(five):
+    assert [k for k, _ in five.iter_from((2, T0, -2))] == FIVE[2:]
+
+
+def test_iter_from_a_key_between_entries_starts_at_the_next_bigger_key(five):
+    assert [k for k, _ in five.iter_from((1, T2, -999))] == FIVE[2:]   # past series 1, before series 2
+    assert [k for k, _ in five.iter_from((3, T0, -5))] == FIVE[4:]     # between seq 10 and seq 3
+
+
+def test_iter_from_before_everything_gives_all_and_after_everything_gives_nothing(five):
+    assert [k for k, _ in five.iter_from((0, 0, 0))] == FIVE
+    assert list(five.iter_from((4, 0, 0))) == []
