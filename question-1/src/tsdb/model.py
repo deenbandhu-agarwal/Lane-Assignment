@@ -82,10 +82,15 @@ class TimeWindow:
         return from_ts <= self.end_ms and to_ts >= self.start_ms
 
     def parent(self, bigger_size_ms: int) -> "TimeWindow":
-        raise NotImplementedError
+        if bigger_size_ms <= self.size_ms or bigger_size_ms % self.size_ms:
+            raise ValueError(f"{bigger_size_ms} ms is not a bigger multiple of {self.size_ms} ms")
+        return TimeWindow.containing(self.start_ms, bigger_size_ms)
 
     def children(self, smaller_size_ms: int) -> list["TimeWindow"]:
-        raise NotImplementedError
+        if smaller_size_ms >= self.size_ms or self.size_ms % smaller_size_ms:
+            raise ValueError(f"{smaller_size_ms} ms does not divide {self.size_ms} ms")
+        return [TimeWindow(smaller_size_ms, start)
+                for start in range(self.start_ms, self.start_ms + self.size_ms, smaller_size_ms)]
 
     def is_closed(self, newest_data_ts: Timestamp, grace_ms: int) -> bool:
         """Closed when the newest DATA timestamp written is past end + grace (grace = one smallest
