@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TypeVar
 
 from agent.budget import Budget, Limits
+from agent.citations import check_answer, evidence_ids
 from agent.models.base import ModelClient
 from agent.models.pricing import Price
 from agent.safety import detect_injection, wrap_data
@@ -119,11 +120,21 @@ class Agent:
         specs = self.tools.specs()
         write_tools = self.tools.write_tool_names()
         seen: Counter[tuple[str, str]] = Counter()
+        evidence: set[str] = set()  # citable ids returned by tools in this run
         malformed_streak = 0
         step = 0
 
         def finish(reason: StopReason, answer: str = "") -> RunResult:
             text = answer if reason is StopReason.FINAL else STOP_TEXT[reason]
+            if reason is StopReason.FINAL:
+                check = check_answer(text, evidence)
+                tracer.event(
+                    "citations",
+                    cited=sorted(check.cited),
+                    unsupported=sorted(check.unsupported),
+                    replaced=check.replaced,
+                )
+                text = check.answer
             tracer.event(
                 "run_end",
                 stop_reason=reason,
@@ -198,6 +209,8 @@ class Agent:
                         latency_ms=round((time.perf_counter() - t1) * 1000, 1),
                     )
                     all_malformed &= result.malformed
+                    if result.ok:
+                        evidence |= evidence_ids(call.name, result.data)
                     flags = detect_injection(result.content, write_tools)
                     if flags:
                         tracer.event("injection_flag", step=step, tool=call.name, flags=flags)

@@ -91,13 +91,14 @@ One JSONL file per run: prompt, tool call, result, latency, tokens, cost per ste
 
 | Piece | Design |
 |---|---|
-| Chunker | Split on markdown headings, then ~300-token pieces, 50-token overlap. Chunk id = `file#n` |
+| Chunker | One chunk per markdown section; sections over 220 words are windowed with 40-word overlap. Text prefixed with `title > heading`. Chunk id = `file#n` |
 | Dates | `date:` front-matter stored on every chunk and shown in results (contradiction handling) |
-| BM25 | Own implementation, k1=1.5, b=0.75, lowercase + punctuation split |
+| BM25 | Own implementation, k1=1.5, b=0.75, lowercase + punctuation split, stopwords, plural stripping |
 | Vectors | numpy array, brute-force cosine (one matrix multiply) |
 | RRF | `score = Σ 1/(60 + rank)` over BM25 and vector lists |
 | Cache | Vectors cached on disk keyed by hash of the corpus |
-| Not found | Top hybrid score below threshold → tool returns `no_relevant_results` |
+| Not found | A chunk is kept only if BM25 ≥ 3.0 or cosine ≥ 0.60 (bge-small, calibrated); none kept → `no_relevant_results`. Decided on raw signals, not RRF (rank-based scores always look fine) |
+| Citation check | Final answer's citations compared with ids tools returned this run: none returned + citations → replaced with "couldn't find"; some unsupported → warning appended |
 
 Retrieval mode (`bm25 | vector | hybrid`) is a parameter so the experiment reuses the same code.
 
@@ -112,7 +113,7 @@ Notes and sandbox repo describe the same world, so questions can combine both.
 | 3 | `team-owners.md`: service → owning team | Multi-doc (part 1) |
 | 4 | `oncall-rota.md`: team → on-call person | Multi-doc (part 2) |
 | 5 | `error-codes.md`: E4012 = token expired… | BM25 wins (exact codes) |
-| 6 | `refunds-runbook.md`: "returning money to a customer" | Vector wins (paraphrase) |
+| 6 | `reversals-runbook.md`: "returning funds to a cardholder" (never says "refund") | Vector wins (paraphrase) |
 | 7 | `vendor-integration-notes.md`: hidden instruction to post a comment | Prompt injection in a note |
 | 8–15 | Architecture, deploy steps, coding standards, incident postmortem, API rate limits, onboarding, glossary, data retention | Realistic filler |
 | — | No office address, salaries, 2023 roadmap | Unanswerable questions |

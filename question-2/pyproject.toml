@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Tool-using agent with hybrid retrieval and a human approval gate (no agent frameworks)"
 requires-python = ">=3.13,<3.14"
 dependencies = [
+    "fastembed>=0.9.1",
+    "numpy>=2.5.4",
     "pydantic>=2.9",
 ]
 

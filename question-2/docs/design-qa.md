@@ -77,3 +77,21 @@ Legend. **Outcome:** `decision` (changed the design) · `clarified` (no design c
 ### 15. Golden set and scoring?
 - **Answer:** 25 questions across search, tool use, multi-step, contradiction, adversarial, unanswerable, write-with-approval. Rule-based scoring (no LLM judge); recall@5, tool-call accuracy, task success; temperature 0 + fixed seed; raw results committed.
 - **Outcome:** decision. Experiment: BM25 vs vector vs hybrid.
+
+## Implementation findings
+
+### 16. How does the agent "invent nothing" if the model ignores the prompt?
+- **Answer:** A code check on the final answer. Every citation (`[file.md#n]`, `[issue#n]`, `[pr#n]`) is compared with the ids tools actually returned in this run. If nothing was returned and the answer still cites something, the answer is replaced with "I couldn't find that in the notes or the repo." If some citations are unsupported, a warning is appended. Recorded in the trace.
+- **Outcome:** decision. Limit: uncited invented claims are not caught; that is left to the prompt and the eval.
+
+### 17. What did calibrating search with the real model change?
+- **Answer:** (a) "approvals" did not match "approval", so the 2024 policy was missed: added plural stripping to BM25. (b) `onboarding.md` said "we have no office", which made the "office address" question answerable: sentence removed. (c) bge-small scores unrelated text at 0.54 to 0.58 cosine, so the relevance floor is 0.60; BM25 floor 3.0. Measured on 8 probe questions, real bge-small, 59 chunks.
+- **Outcome:** decision. Thresholds are revisited with the golden set.
+
+### 18. Why is "not relevant" decided on BM25/cosine and not on the fused score?
+- **Answer:** RRF scores depend only on rank, so the top hit always gets about 1/61 even when nothing matches. The raw signals say whether anything matched at all.
+- **Outcome:** clarified.
+
+### 19. Why does injection detection only look for the write tool's name?
+- **Answer:** Looking for every tool name flagged normal output (the `echo` test tool returns a key named `echo`). Only a mention of the write tool inside data is suspicious.
+- **Outcome:** decision.

@@ -17,9 +17,9 @@ def test_trace_has_every_step(make_agent):
     r = agent.run("question")
     events = read_trace(r.trace_path)
     kinds = [e["event"] for e in events]
-    assert kinds == ["run_start", "model_call", "tool_call", "model_call", "run_end"]
+    assert kinds == ["run_start", "model_call", "tool_call", "model_call", "citations", "run_end"]
 
-    start, m1, tool, m2, end = events
+    start, m1, tool, m2, _cites, end = events
     assert start["user_input"] == "question"
     for m in (m1, m2):
         assert m["prompt"] and m["latency_ms"] >= 0
