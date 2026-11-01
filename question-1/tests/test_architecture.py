@@ -2,6 +2,8 @@
 
 1. Dependency inversion: swappable implementation modules may be imported only by
    tsdb.bootstrap or by modules of their own package. Everyone else must use tsdb.ports.
+   Exception: tsdb.tools.* (e.g. tsdb-dump) are entry points that read one concrete file format
+   on purpose; the engine never imports them.
 2. Every default implementation structurally satisfies its port.
 """
 
@@ -48,7 +50,7 @@ def test_only_bootstrap_imports_swappable_implementations():
     for path in SRC.rglob("*.py"):
         module = "tsdb." + ".".join(path.relative_to(SRC).with_suffix("").parts)
         module = module.removesuffix(".__init__")
-        if module == "tsdb.bootstrap":
+        if module == "tsdb.bootstrap" or module.startswith("tsdb.tools."):
             continue
         for imported in _imports(path):
             owner = SWAPPABLE.get(imported)
