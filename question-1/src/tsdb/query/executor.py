@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from tsdb.engine.version import Snapshot
+from tsdb.errors import QueryLimitError
 from tsdb.model import Aggregation, SeriesId, SeriesKey, Timestamp
 from tsdb.ports import AggregatorFactory, SeriesResolver
 from tsdb.query.aggregate import BucketAggregator
@@ -54,7 +55,11 @@ class QueryExecutor:
 
     def run(self, series_ids: list[SeriesId], from_ts: Timestamp, to_ts: Timestamp,
             agg: Aggregation | None, bucket_ms: int | None) -> QueryResult:
+        if len(series_ids) > self._max_series:
+            raise QueryLimitError(f"query matches {len(series_ids)} series, limit is {self._max_series}; "
+                                  "narrow the filter")
         version, seq = self._snapshot.version, self._snapshot.seq
+        self._points_read = 0
         memtables = (version.active, *version.immutables)
         tables = version.tables_overlapping(from_ts, to_ts)
         cursors = [(t, t.cursor()) for t in tables]            # one forward-only cursor per table
@@ -65,7 +70,7 @@ class QueryExecutor:
             sources = [m.read_series(series_id, from_ts, to_ts, seq) for m in memtables]
             sources += [c.read_series(series_id, from_ts, to_ts) for t, c in cursors
                         if t.may_contain(series_id, from_ts, to_ts)]
-            points = merge_series(sources, tombstones)
+            points = self._count(merge_series(sources, tombstones))
             if agg is None:
                 values = [(p.timestamp, p.value) for p in points]
             else:
@@ -73,6 +78,15 @@ class QueryExecutor:
             if values:
                 result.series.append(SeriesResult(self._series.key_of(series_id), values))
         return result
+
+    def _count(self, points):
+        """Counts points READ (also when aggregated): the limit bounds work, not answer size."""
+        for p in points:
+            self._points_read += 1
+            if self._points_read > self._max_points:
+                raise QueryLimitError(f"query reads more than {self._max_points} points; "
+                                      "narrow the time range or the filter")
+            yield p
 
     def list_series(self, series_ids: list[SeriesId]) -> SeriesListResult:
         raise NotImplementedError

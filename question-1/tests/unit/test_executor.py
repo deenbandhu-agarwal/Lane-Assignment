@@ -84,3 +84,18 @@ def test_q2_avg_per_minute_bucket_and_one_value_for_the_whole_range(snapshot):
     assert by_minute.series[0].points == [(T, pytest.approx((29.9 + 30.2) / 2)),
                                           (T + 2 * MINUTE, pytest.approx((31.0 + 31.5) / 2))]
     assert whole.series[0].points == [(T, 4.0)]   # 4 visible points, keyed by `from`
+
+
+def test_q3_too_many_series_is_refused_before_reading_anything(snapshot):
+    with pytest.raises(QueryLimitError, match="series"):
+        executor(snapshot, max_series=1).run([1, 3], T, T + 3 * MINUTE, agg=None, bucket_ms=None)
+
+
+def test_q3_too_many_points_is_refused(snapshot):
+    with pytest.raises(QueryLimitError, match="points"):
+        executor(snapshot, max_points=3).run([1, 3], T, T + 3 * MINUTE, agg=None, bucket_ms=None)  # 5 visible
+
+
+def test_q3_the_point_limit_counts_points_read_even_when_aggregated(snapshot):
+    with pytest.raises(QueryLimitError, match="points"):
+        executor(snapshot, max_points=3).run([1, 3], T, T + 3 * MINUTE, agg=Aggregation.COUNT, bucket_ms=None)
