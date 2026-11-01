@@ -11,6 +11,11 @@
 | Benchmarks (raw output → `bench/results/`) | `make bench` |
 | Local dev (free-threaded Python 3.14t) | `make setup && make test` |
 
+## Design documents
+- [`DESIGN.md`](DESIGN.md): the design (≤ 2 pages)
+- [`docs/design-qa.md`](docs/design-qa.md): every design question raised while designing, with the answer and outcome (decision / clarified / deferred), including corrections
+- [`docs/api-contract.md`](docs/api-contract.md): REST API contract, filter grammar, query cases
+
 ## Architecture
 _TODO: diagram — API → Database → Shard (catalog + index, N WALs, memtable skip list, SSTables, MANIFEST)._
 
