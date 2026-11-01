@@ -178,3 +178,25 @@ def test_may_contain_skips_by_series_range_time_range_and_bloom_but_never_hides_
     assert not reader.may_contain(1, T_10_00 - MINUTE, T_10_00 - 1)        # before min_ts
     assert not reader.may_contain(1, T_10_00 + MINUTE, T_10_00 + 2 * MINUTE)   # after max_ts
     assert not reader.may_contain(3, *minute)    # inside 1..9 but absent; this filter (5 ids) answers "no" for 3
+
+
+@pytest.mark.parametrize("bad_second_point, why", [
+    (Point(1, T_10_00, seq=9, value=0.0), "same key twice (two versions)"),
+    (Point(1, T_10_00 - 1, seq=9, value=0.0), "older time, same series"),
+    (Point(0, T_10_00 + SECOND, seq=9, value=0.0), "smaller series id"),
+])
+def test_the_writer_refuses_points_out_of_key_order(tmp_path, bad_second_point, why):
+    writer = factory(tmp_path).new_writer(WINDOW_10_00, 3)
+    writer.add(Point(1, T_10_00, seq=1, value=0.0))
+
+    with pytest.raises(ValueError):
+        writer.add(bad_second_point)
+
+
+def test_the_writer_refuses_a_point_or_tombstone_outside_its_window(tmp_path):
+    writer = factory(tmp_path).new_writer(WINDOW_10_00, 3)
+
+    with pytest.raises(ValueError):
+        writer.add(Point(1, T_10_00 + MINUTE, seq=1, value=0.0))          # 10:01:00.000, next window
+    with pytest.raises(ValueError):
+        writer.add_tombstone(Tombstone(5, (1,), T_10_00 + 30 * SECOND, T_10_00 + MINUTE))   # not clipped

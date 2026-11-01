@@ -34,6 +34,7 @@ class SSTableWriter:
         self._index: list[tuple[int, int, int, int]] = []     # first sid, first ts, offset, length
         self._tombstones: list[Tombstone] = []
         self._series_ids: set[int] = set()
+        self._last_key: tuple[int, int] | None = None
         self._point_count = 0
         self._min_ts: int | None = None
         self._max_ts: int | None = None
@@ -42,6 +43,12 @@ class SSTableWriter:
     def add(self, point: Point) -> None:
         """Points must arrive in (series_id, timestamp) order, one version per key, all inside
         this file's window (checked: a point outside the window is a bug)."""
+        key = (point.series_id, point.timestamp)
+        if self._last_key is not None and key <= self._last_key:
+            raise ValueError(f"point {key} not after {self._last_key}: input must be sorted, one version per key")
+        if not self._window.contains(point.timestamp):
+            raise ValueError(f"point at {point.timestamp} is outside window {self._window}")
+        self._last_key = key
         self._block.append(point)
         self._note(point.series_id, point.timestamp, point.timestamp)
         self._point_count += 1
@@ -50,6 +57,8 @@ class SSTableWriter:
 
     def add_tombstone(self, tombstone: Tombstone) -> None:
         """Already clipped to this file's window by the caller."""
+        if not (self._window.contains(tombstone.from_ts) and self._window.contains(tombstone.to_ts)):
+            raise ValueError(f"tombstone {tombstone} is not clipped to window {self._window}")
         self._tombstones.append(tombstone)
         for series_id in tombstone.series_ids:
             self._note(series_id, tombstone.from_ts, tombstone.to_ts)
