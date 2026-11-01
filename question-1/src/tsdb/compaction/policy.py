@@ -94,4 +94,16 @@ class TimeWindowPolicy(CompactionPolicy):
         return None
 
     def _late_merge(self, groups) -> CompactionJob | None:
+        """Extras = every owned file except the biggest one in the top window itself.
+        Merge when they reach late_merge_ratio of that biggest file (re-writing a big file for every
+        late point would be write amplification). The once-per-interval pass is not built yet:
+        until then, small extras wait; reads apply their tombstones anyway."""
+        for top, members in sorted(groups.items()):
+            own = [t for w, t in members if w == top]
+            if top.size_ms == self._steps[0] or not own:
+                continue
+            biggest = max(own, key=lambda t: t.size_bytes)
+            extra = sum(t.size_bytes for _, t in members if t is not biggest)
+            if extra and extra >= self._late_merge_ratio * biggest.size_bytes:
+                return CompactionJob(JobKind.LATE_MERGE, tuple(t for _, t in members), top)
         return None

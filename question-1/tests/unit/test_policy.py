@@ -74,3 +74,35 @@ def test_p2_four_closed_days_of_six_hour_files_move_up_into_one_day():
 
     assert (job.kind, job.output_window, names(job)) == (JobKind.MOVE_UP, TimeWindow(DAY, T_00_00),
                                                          ["q0", "q1", "q2", "q3"])
+
+
+BIG = FakeTable("big-06-12", size_bytes=100_000)
+
+
+def test_p3_late_files_below_10_percent_of_the_big_file_wait():
+    late = {W_06_12: (BIG,), hour(10): (FakeTable("late1", 4_000), FakeTable("late2", 5_000))}   # 9%
+
+    assert POLICY.pick(version(late, T_13_00)) is None
+
+
+def test_p3_late_files_reaching_10_percent_are_merged_into_the_big_window():
+    late = {W_06_12: (BIG,), hour(10): (FakeTable("late1", 4_000), FakeTable("late2", 6_000))}   # 10%
+
+    job = POLICY.pick(version(late, T_13_00))
+
+    assert (job.kind, job.output_window, names(job)) == (JobKind.LATE_MERGE, W_06_12,
+                                                         ["big-06-12", "late1", "late2"])
+
+
+def test_p3_four_late_files_in_one_hour_are_not_size_tiered_on_their_own():
+    tiny = tuple(FakeTable(f"t{i}", 100) for i in range(4))   # 4 files, but they belong to the 6 h file
+
+    assert POLICY.pick(version({W_06_12: (BIG,), hour(10): tiny}, T_13_00)) is None
+
+
+def test_p3_a_delete_piece_inside_the_big_window_counts_as_extra():
+    piece = FakeTable("delete-piece", 10_000)
+
+    job = POLICY.pick(version({W_06_12: (BIG, piece)}, T_13_00))
+
+    assert (job.kind, names(job)) == (JobKind.LATE_MERGE, ["big-06-12", "delete-piece"])
