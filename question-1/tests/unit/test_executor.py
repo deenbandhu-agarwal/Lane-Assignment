@@ -73,3 +73,14 @@ def test_q1_a_series_with_no_points_in_range_is_left_out_like_an_empty_bucket(sn
     result = executor(snapshot).run([1, 2], T + 30 * SECOND, T + 40 * SECOND, agg=None, bucket_ms=None)
 
     assert result.series == []                    # Delhi has nothing in 10:00:30-10:00:40, Pune never had data
+
+
+def test_q2_avg_per_minute_bucket_and_one_value_for_the_whole_range(snapshot):
+    run = executor(snapshot).run
+
+    by_minute = run([1], T, T + 3 * MINUTE, agg=Aggregation.AVG, bucket_ms=MINUTE)
+    whole = run([1], T, T + 3 * MINUTE, agg=Aggregation.COUNT, bucket_ms=None)
+
+    assert by_minute.series[0].points == [(T, pytest.approx((29.9 + 30.2) / 2)),
+                                          (T + 2 * MINUTE, pytest.approx((31.0 + 31.5) / 2))]
+    assert whole.series[0].points == [(T, 4.0)]   # 4 visible points, keyed by `from`
