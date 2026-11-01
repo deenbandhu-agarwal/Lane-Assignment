@@ -26,25 +26,34 @@ class Memtable:
         self._max_entries = max_entries
         self._tombstones: dict[SeriesId, list[Tombstone]] = {}   # per-series lookup
         self._write_lock = threading.Lock()                      # one writer at a time
-        self._approx_bytes = 0
+        self._entries = 0                                        # points + tombstones
         self._frozen = False
         self.max_seq: Seq = 0
         self.max_timestamp: Timestamp = 0     # newest data time seen
 
     def apply(self, entries: list[Point | Tombstone]) -> None:
+        """Entries arrive in seq order (one WAL batch). max_timestamp follows POINTS only: a delete
+        reaching into the future must not close windows early."""
         with self._write_lock:
+            if self._frozen:
+                raise RuntimeError("memtable is frozen; writes go to the new active memtable")
             for e in entries:
                 if isinstance(e, Tombstone):
                     for series_id in e.series_ids:
                         self._tombstones.setdefault(series_id, []).append(e)
                 else:
                     self._store.insert((e.series_id, e.timestamp, -e.seq), e.value)
+                    self.max_timestamp = max(self.max_timestamp, e.timestamp)
+                self.max_seq = max(self.max_seq, e.seq)
+            self._entries += len(entries)
 
     def freeze(self) -> None:
-        raise NotImplementedError
+        with self._write_lock:
+            self._frozen = True
 
     def is_full(self) -> bool:
-        raise NotImplementedError
+        """Size estimate (entries x entry_bytes) or the hard entry cap, whichever comes first."""
+        return self._entries * self._entry_bytes >= self._max_bytes or self._entries >= self._max_entries
 
     def read_series(self, series_id: SeriesId, from_ts: Timestamp, to_ts: Timestamp,
                     snapshot_seq: Seq) -> Iterator[Point]:

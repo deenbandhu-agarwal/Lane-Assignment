@@ -72,3 +72,38 @@ def test_a_delete_over_several_series_is_listed_once_for_flush():
     m.apply([both])
 
     assert m.all_tombstones() == [both]
+
+
+def test_a_frozen_memtable_refuses_writes_but_still_answers_reads(mem):
+    mem.freeze()
+
+    with pytest.raises(RuntimeError):
+        mem.apply([Point(1, T_10_02, 11, 1.0)])
+    assert list(mem.read_series(1, T_10_02, T_10_02, snapshot_seq=10)) == [Point(1, T_10_02, 7, 31.0)]
+
+
+def test_full_when_the_size_estimate_reaches_the_limit():
+    m = new_memtable(max_bytes=500, entry_bytes=100)          # 5 entries x 100 B
+    m.apply(STEP1[:4])
+    assert not m.is_full()
+
+    m.apply([DELETE_MUMBAI])                                  # a tombstone counts as one entry
+    assert m.is_full()
+
+
+def test_full_when_the_entry_cap_is_reached_first():
+    m = new_memtable(max_entries=3)
+    m.apply(STEP1[:2])
+    assert not m.is_full()
+
+    m.apply(STEP1[2:3])
+    assert m.is_full()
+
+
+def test_max_seq_follows_every_write_and_max_timestamp_only_data(mem):
+    assert mem.max_seq == 10                                  # the delete
+    assert mem.max_timestamp == T_10_02                       # newest POINT time
+
+    mem.apply([Tombstone(12, (1,), T_10_00, T_10_02 + 3_600_000)])   # a delete reaching 1 h ahead
+
+    assert (mem.max_seq, mem.max_timestamp) == (12, T_10_02)  # must not close windows early
