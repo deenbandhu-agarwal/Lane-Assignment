@@ -47,7 +47,10 @@ class Tombstone:
     to_ts: Timestamp
 
     def hides(self, series_id: SeriesId, timestamp: Timestamp, seq: Seq) -> bool:
-        raise NotImplementedError
+        """Rule 1: same series, inside [from_ts, to_ts], and strictly older than the delete."""
+        return (seq < self.seq
+                and self.from_ts <= timestamp <= self.to_ts
+                and series_id in self.series_ids)
 
     def clip(self, window: "TimeWindow") -> "Tombstone | None":
         """The piece of this tombstone inside `window` (None if no overlap). Flush cuts every

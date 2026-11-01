@@ -122,3 +122,20 @@ def test_clipping_to_a_window_the_delete_does_not_touch_gives_nothing():
 
     assert delete.clip(TimeWindow(HOUR, T_09_00_00_000)) is None
     assert delete.clip(TimeWindow(HOUR, T_13_00_00_000)) is None
+
+
+T_10_01_00_000 = 1_730_368_860_000
+T_10_02_00_000 = 1_730_368_920_000
+MUMBAI = 3
+DELHI_GARAGE = 2
+
+
+def test_rule_1_a_delete_hides_only_older_points_of_its_series_inside_its_range():
+    delete = Tombstone(seq=10, series_ids=(MUMBAI,), from_ts=T_10_00_00_000, to_ts=T_10_01_00_000)
+
+    assert delete.hides(MUMBAI, T_10_00_00_000, seq=3)            # older point, first ms of range
+    assert delete.hides(MUMBAI, T_10_01_00_000, seq=6)            # older point, last ms (inclusive)
+    assert not delete.hides(DELHI_GARAGE, T_10_00_00_000, seq=3)  # other series
+    assert not delete.hides(MUMBAI, T_10_02_00_000, seq=3)        # outside the range
+    assert not delete.hides(MUMBAI, T_10_00_00_000, seq=11)       # written after the delete
+    assert not delete.hides(MUMBAI, T_10_00_00_000, seq=10)       # not older -> not hidden
