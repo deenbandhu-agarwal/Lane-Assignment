@@ -10,18 +10,26 @@ VersionSet.install (small lock).
 Backpressure: at most `max_immutable_memtables` (1) frozen memtables wait for flush. If the active
 one is full too, `wait_for_room()` blocks writers until the flush finishes: a slow disk makes writes
 slower instead of using unbounded memory.
+
+Failure: if a background thread dies (e.g. fsync of a table fails), the error is stored and every
+later wait_for_room() raises FatalStorageError, so writes get 500 instead of waiting forever.
+Reads keep working on what is in memory and on disk.
 Depends on the Flusher, Compactor and CompactionPolicy it is given (no Shard).
 """
 
 from __future__ import annotations
 
+import logging
 import threading
 
 from tsdb.compaction.compactor import Compactor
 from tsdb.compaction.policy import CompactionPolicy
 from tsdb.engine.flush import Flusher
 from tsdb.engine.version import VersionSet
+from tsdb.errors import FatalStorageError
 from tsdb.model import TimeWindow
+
+log = logging.getLogger("tsdb.background")
 
 
 class BackgroundWorker:
@@ -40,10 +48,12 @@ class BackgroundWorker:
         self._flush_mutex = threading.Lock()         # swap + flush, one at a time, in memtable order
         self._compact_mutex = threading.Lock()       # pick + run: two runners must never take one job
         self._threads: list[threading.Thread] = []
+        self._failed: BaseException | None = None    # set once by a dying thread; never cleared
 
     def start(self) -> None:
-        self._threads = [threading.Thread(target=self._flush_loop, name="flush", daemon=True),
-                         threading.Thread(target=self._compaction_loop, name="compaction", daemon=True)]
+        self._threads = [threading.Thread(target=self._guarded, args=(self._flush_loop,), name="flush", daemon=True),
+                         threading.Thread(target=self._guarded, args=(self._compaction_loop,),
+                                          name="compaction", daemon=True)]
         for t in self._threads:
             t.start()
 
@@ -56,6 +66,7 @@ class BackgroundWorker:
         max_immutable_memtables are already waiting for flush."""
         with self._room:
             while True:
+                self._raise_if_failed()
                 version = self._versions.current()
                 if not version.active.is_full():
                     return
@@ -77,6 +88,22 @@ class BackgroundWorker:
         for t in self._threads:
             t.join()
         self._threads = []
+
+    def _raise_if_failed(self) -> None:
+        if self._failed is not None:
+            raise FatalStorageError(f"background work failed, writes are refused until restart "
+                                    f"(recovery replays the WAL): {self._failed}") from self._failed
+
+    def _guarded(self, loop) -> None:
+        """A dying background thread must not be silent: writers would wait for room forever.
+        Store the error and wake every waiting writer; from now on every write fails (500)."""
+        try:
+            loop()
+        except Exception as e:
+            log.exception("background thread %s failed", threading.current_thread().name)
+            with self._room:
+                self._failed = e
+                self._room.notify_all()
 
     def _flush_loop(self) -> None:
         while not self._stop.is_set():

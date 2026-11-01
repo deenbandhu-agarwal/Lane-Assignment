@@ -1,11 +1,16 @@
 """REST API over a real Database on a temp folder (seam S4). Contract: docs/api-contract.md."""
 
+import threading
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
 from tsdb.api.app import create_app
 from tsdb.bootstrap import build_database
 from tsdb.config import EngineConfig
+from tsdb.errors import FatalStorageError
+from tsdb.storage.fileio import OsFileOps
 
 T = 1_730_368_800_000
 MINUTE = 60_000
@@ -109,3 +114,41 @@ def test_query_over_the_series_limit_is_400(loaded):
 
 def test_delete_needs_a_metric_or_a_filter(loaded):
     assert loaded.delete("/series", params={"from": 0, "to": T}).status_code == 400
+
+
+class SstFsyncFails(OsFileOps):
+    """The disk breaks for table files only: the WAL keeps working, the flush thread fails."""
+
+    def __init__(self):
+        self._paths = {}
+
+    def open_append(self, path):
+        fd = super().open_append(path)
+        self._paths[fd] = path
+        return fd
+
+    def fsync(self, fd):
+        if self._paths.get(fd, Path()).name.endswith(".sst.tmp"):
+            raise FatalStorageError("fsync failed: EIO")
+        super().fsync(fd)
+
+
+def test_s5_after_a_failed_flush_writes_get_500_and_nothing_hangs(tmp_path):
+    db = build_database(EngineConfig(data_dir=tmp_path, memtable_max_entries=2), files=SstFsyncFails())
+    statuses = []
+
+    def keep_writing():
+        with TestClient(create_app(db), raise_server_exceptions=False) as c:
+            for i in range(20):                        # memtable of 2: the 1st flush fails at once
+                statuses.append(c.post("/write", json=[point("Delhi", T + i, float(i))]).status_code)
+                if statuses[-1] == 500:
+                    return
+
+    writer = threading.Thread(target=keep_writing, daemon=True)
+    writer.start()
+    writer.join(timeout=10)
+    try:
+        assert not writer.is_alive(), f"write hung after {statuses}"
+        assert statuses[-1] == 500
+    finally:
+        db.close() if not writer.is_alive() else None

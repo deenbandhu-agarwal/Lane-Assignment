@@ -214,6 +214,14 @@ Legend — **Outcome:** `decision` (changed the design) · `clarified` (no desig
 - **Answer:** Both do "read state → change → commit MANIFEST → install Version". If each kept its own copy, a compaction commit built from an older state could overwrite a flush commit, and the flushed file would vanish from the MANIFEST (data still on disk, but not live, so lost after the WAL segment is deleted). Same for file numbers: two threads could pick the same number.
 - **Outcome:** decision: one `LiveState` object owns the current MANIFEST state, file-number allocation, the WAL segment counter and Version building, all under one lock. Flush and compaction only send it an `Edit` (tables added / removed, memtable flushed, next WAL segment). Order inside: new state → `manifest.commit` → `versions.install`. Found while writing the flush tests (#45 D3 consequence).
 
+### 48. Two runners of background work: can they collide?
+- **Answer:** Yes. `run_until_idle` (tests, benchmark) and the compaction thread both did "pick a job, run it" with no lock. Both picked the same job; the first deleted its input files, the second then read a deleted file (`FileNotFoundError`). Found by the first end-to-end test with real threads. The same can happen for flush: two swaps flushed out of order would break "every earlier memtable is already a table" (#44) and the WAL segment bookkeeping.
+- **Outcome:** decision: pick + run of a compaction job under one lock; swap + flush under another lock, with a re-check inside the lock (another runner may have done the work while we waited).
+
+### 49. What happens when a background thread fails (e.g. a table fsync fails)?
+- **Answer:** Before: the thread died silently. Writes kept going until the memtable was full, then waited forever for a flush that would never come (a hang, not an error). Now the error is stored and every waiting and later writer gets `FatalStorageError` → HTTP 500. No retry, the same rule as a failed WAL fsync (#46): after a failed fsync the kernel may have dropped the pages. Reads keep working. A restart recovers: the orphan `.tmp` is removed and the WAL replays.
+- **Outcome:** decision. Tested with a disk that fails only for table files (`test_api.py`, S5).
+
 ### Tooling
 - A prototype dump tool (outside this repo) printed SSTable / WAL / series.log / MANIFEST files as text (`--hex` for raw bytes) and showed a cut WAL record as "replay stops here". The engine ships the same as `tsdb-dump` (`src/tsdb/tools/dump.py`).
 
