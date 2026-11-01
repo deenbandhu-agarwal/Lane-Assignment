@@ -25,11 +25,16 @@ class SSTableFactory:
         self._filter_fp_rate = filter_fp_rate
 
     def new_writer(self, window: TimeWindow, file_no: int) -> SSTableWriter:
-        raise NotImplementedError
+        final = self._table_path(window, file_no)
+        tmp = final.with_name(final.name + ".tmp")
+        return SSTableWriter(tmp, window, self._files, self._faults, self._filters,
+                             self._block_target_bytes, self._filter_fp_rate)
 
     def publish(self, tmp_path: Path, window: TimeWindow, file_no: int) -> Path:
         """Rename .tmp -> final name, fsync the directory."""
-        raise NotImplementedError
+        final = self._table_path(window, file_no)
+        self._files.publish_tmp(tmp_path, final)
+        return final
 
     def open_reader(self, path: Path, window: TimeWindow) -> SSTableReader:
         raise NotImplementedError
