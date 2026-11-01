@@ -82,3 +82,13 @@ def test_a_record_cut_inside_its_payload_is_dropped_and_the_file_is_valid_up_to_
 
 def test_an_empty_file_has_no_records_and_a_clean_end():
     assert scan(b"") == ScanResult(records=[], valid_length=0, stopped_reason=None)
+
+
+def test_one_damaged_byte_in_record_two_stops_the_scan_after_record_one():
+    damaged = bytearray(STEP1_WAL)
+    damaged[37 + 8 + 25] ^= 0x01               # one bit of record 2's value (payload bytes 21-28)
+
+    result = scan(bytes(damaged))
+
+    assert [r.entry.seq for r in result.records] == [1]
+    assert (result.valid_length, result.stopped_reason) == (37, "bad checksum")

@@ -85,9 +85,12 @@ def _walk(data: bytes) -> tuple[list[tuple[int, bytes]], int, str | None]:
         start = offset + _HEADER.size
         if start > len(data):
             return frames, offset, "cut record"
-        length, _ = _HEADER.unpack_from(data, offset)
+        length, crc = _HEADER.unpack_from(data, offset)
         if start + length > len(data):
             return frames, offset, "cut record"
-        frames.append((offset, data[start:start + length]))
+        payload = data[start:start + length]
+        if zlib.crc32(payload) != crc:
+            return frames, offset, "bad checksum"
+        frames.append((offset, payload))
         offset = start + length
     return frames, offset, None
