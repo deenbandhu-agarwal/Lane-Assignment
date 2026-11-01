@@ -30,6 +30,11 @@ def split_by_window(points: list[Point], tombstones: list[Tombstone],
     groups: dict[TimeWindow, tuple[list[Point], list[Tombstone]]] = {}
     for p in points:
         groups.setdefault(TimeWindow.containing(p.timestamp, window_ms), ([], []))[0].append(p)
+    for t in tombstones:
+        start = TimeWindow.containing(t.from_ts, window_ms).start_ms
+        for window_start in range(start, t.to_ts + 1, window_ms):
+            window = TimeWindow(window_ms, window_start)
+            groups.setdefault(window, ([], []))[1].append(t.clip(window))
     return dict(sorted(groups.items()))
 
 
