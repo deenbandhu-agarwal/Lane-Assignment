@@ -1,21 +1,18 @@
-"""Scaffold: each test states the property it must prove."""
+"""Bloom filter over series ids (seams 1-4).
 
-import pytest
+Golden values come from the walkthrough example (q1-example/make_example.py, separate code):
+step2 sst/1m/10.00/000001.sst Bloom block for series ids [1, 2, 3].
+"""
 
-pytestmark = pytest.mark.skip(reason="scaffold: not implemented")
-
-
-def test_optimal_params_for_1_percent():
-    """n=10_000, p=0.01 -> m ~ 95_851 bits, k = 7 (show the math in README)."""
+from tsdb.sstable.bloom import BloomFilter
 
 
-def test_no_false_negatives():
-    """Every added id -> may_contain is True."""
+def test_sizing_for_10k_ids_at_1_percent():
+    # m = ceil(-10000 * ln(0.01) / ln(2)^2) = ceil(95850.58) = 95851 -> whole bytes -> 95856
+    # k = round(95856 / 10000 * ln 2) = round(6.644) = 7
+    assert BloomFilter.optimal_params(10_000, 0.01) == (95_856, 7)
 
 
-def test_measured_false_positive_rate():
-    """1M absent ids -> measured FPR close to 1%; value reported in README."""
-
-
-def test_roundtrip_bytes():
-    """to_bytes/from_bytes keeps answers identical."""
+def test_sizing_for_the_three_ids_in_the_example_file():
+    # m = ceil(28.76) = 29 -> 32 ; k = round(32 / 3 * ln 2) = round(7.39) = 7
+    assert BloomFilter.optimal_params(3, 0.01) == (32, 7)
