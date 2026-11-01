@@ -6,6 +6,8 @@ randomised per process and would send a series to a different WAL after a restar
 
 from __future__ import annotations
 
+import zlib
+
 from tsdb.model import SeriesKey
 
 
@@ -14,4 +16,4 @@ class HashWalRouter:
         self._wal_count = wal_count
 
     def route(self, key: SeriesKey) -> int:
-        raise NotImplementedError
+        return zlib.crc32(key.canonical().encode()) % self._wal_count
