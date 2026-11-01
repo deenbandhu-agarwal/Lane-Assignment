@@ -132,3 +132,35 @@ def test_a_file_cut_short_is_refused(example_file):
 
     with pytest.raises(CorruptFileError):
         tables.open_reader(path, WINDOW_10_00)
+
+
+def test_a_range_read_returns_exactly_the_points_in_range_and_reads_only_their_blocks(tmp_path):
+    tables = factory(tmp_path)
+    reader = tables.open_reader(write(tables, WINDOW_10_00, 2, MANY_POINTS), WINDOW_10_00)
+    # series 2 sits in blocks 5..9 (2 points per block): s0-1, s2-3, s4-5, s6-7, s8-9
+    cursor = reader.cursor()
+
+    got = list(cursor.read_series(2, T_10_00 + 3 * SECOND, T_10_00 + 6 * SECOND))
+
+    assert got == [p for p in MANY_POINTS if p.series_id == 2 and 3 <= (p.timestamp - T_10_00) // SECOND <= 6]
+    assert cursor.blocks_read == 3                       # s2-3, s4-5, s6-7 out of 20 blocks
+
+
+def test_a_series_outside_the_files_data_gives_nothing(tmp_path):
+    tables = factory(tmp_path)
+    reader = tables.open_reader(write(tables, WINDOW_10_00, 2, MANY_POINTS), WINDOW_10_00)
+
+    assert list(reader.cursor().read_series(1, T_10_00 + 30 * SECOND, T_10_00 + 40 * SECOND)) == []
+    assert list(reader.cursor().read_series(10, T_10_00, T_10_00 + 59 * SECOND)) == []
+
+
+def test_the_next_series_in_the_same_block_does_not_read_the_block_again(example_file):
+    tables, path = example_file                          # block 0 = series 1, 2 ; block 1 = series 3
+    cursor = tables.open_reader(path, WINDOW_10_00).cursor()
+    whole_minute = (T_10_00, T_10_00 + MINUTE - 1)
+
+    assert list(cursor.read_series(1, *whole_minute)) == STEP2_POINTS[0:1]
+    assert list(cursor.read_series(2, *whole_minute)) == STEP2_POINTS[1:2]
+    assert cursor.blocks_read == 1
+    assert list(cursor.read_series(3, *whole_minute)) == STEP2_POINTS[2:3]
+    assert cursor.blocks_read == 2

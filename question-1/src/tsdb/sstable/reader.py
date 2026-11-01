@@ -8,6 +8,7 @@ engine.version reference counting.
 
 from __future__ import annotations
 
+import bisect
 import zlib
 from collections.abc import Iterator
 from pathlib import Path
@@ -89,7 +90,11 @@ class SSTableReader:
         return self._tombstones_by_series.get(series_id, [])
 
     def cursor(self) -> "ForwardCursor":
-        raise NotImplementedError
+        return ForwardCursor(self)
+
+    @property
+    def index(self) -> list[IndexEntry]:
+        return self._index
 
     def iter_all(self) -> Iterator[Point]:
         for entry in self._index:
@@ -128,10 +133,28 @@ class ForwardCursor:
 
     def __init__(self, reader: SSTableReader) -> None:
         self._reader = reader
+        self._first_keys = [(e.first_series_id, e.first_timestamp) for e in reader.index]
+        self._cached: tuple[int, list[Point]] | None = None     # (block number, its points)
+        self._blocks_read = 0
 
     def read_series(self, series_id: SeriesId, from_ts: Timestamp, to_ts: Timestamp) -> Iterator[Point]:
-        raise NotImplementedError
+        # last block whose first key <= (series, from): the first wanted point can only be there or later
+        block_no = max(0, bisect.bisect_right(self._first_keys, (series_id, from_ts)) - 1)
+        end = (series_id, to_ts)
+        while block_no < len(self._first_keys) and self._first_keys[block_no] <= end:
+            for p in self._block(block_no):
+                if (p.series_id, p.timestamp) > end:
+                    return
+                if p.series_id == series_id and p.timestamp >= from_ts:
+                    yield p
+            block_no += 1
 
     @property
     def blocks_read(self) -> int:
-        raise NotImplementedError
+        return self._blocks_read
+
+    def _block(self, block_no: int) -> list[Point]:
+        if self._cached is None or self._cached[0] != block_no:
+            self._cached = (block_no, self._reader.read_block(self._reader.index[block_no]))
+            self._blocks_read += 1
+        return self._cached[1]
