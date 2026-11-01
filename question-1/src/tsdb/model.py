@@ -114,7 +114,7 @@ class TimeWindow:
 
     def label(self) -> str:
         """Directory name: '<size_ms>/<start_ms>' (dump tool prints it human-readable)."""
-        raise NotImplementedError
+        return f"{self.size_ms}/{self.start_ms}"
 
 
 @dataclass(frozen=True, slots=True)

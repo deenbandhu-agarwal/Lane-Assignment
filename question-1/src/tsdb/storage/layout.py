@@ -32,7 +32,7 @@ class ShardLayout:
         return self.root / "wal" / str(wal_index) / f"{segment:06d}.log"
 
     def sstable(self, window: TimeWindow, file_no: int) -> Path:
-        return self.root / "sst" / str(window.size_ms) / str(window.start_ms) / f"{file_no:06d}.sst"
+        return self.root / "sst" / window.label() / f"{file_no:06d}.sst"
 
     def tmp_for(self, final_path: Path) -> Path:
         return final_path.with_name(final_path.name + ".tmp")

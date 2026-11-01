@@ -139,3 +139,7 @@ def test_rule_1_a_delete_hides_only_older_points_of_its_series_inside_its_range(
     assert not delete.hides(MUMBAI, T_10_02_00_000, seq=3)        # outside the range
     assert not delete.hides(MUMBAI, T_10_00_00_000, seq=11)       # written after the delete
     assert not delete.hides(MUMBAI, T_10_00_00_000, seq=10)       # not older -> not hidden
+
+
+def test_label_is_the_directory_name_size_then_start():
+    assert TimeWindow(HOUR, T_10_00_00_000).label() == "3600000/1730368800000"
