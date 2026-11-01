@@ -4,7 +4,8 @@ Numbers follow the walkthrough example."""
 import pytest
 
 from tsdb.model import Point, Tombstone
-from tsdb.query.aggregate import BucketAggregator
+from tsdb.model import Aggregation
+from tsdb.query.aggregate import AGGREGATORS, BucketAggregator
 from tsdb.query.merge import merge_series
 
 T_10_00 = 1_730_368_800_000
@@ -93,3 +94,18 @@ def test_no_bucket_size_means_one_value_for_the_whole_range_keyed_by_from():
 
 def test_no_points_gives_no_buckets():
     assert BucketAggregator(Values, None, T_10_00).run(iter([])) == []
+
+
+@pytest.mark.parametrize("name, expected", [
+    ("avg", 2.8), ("sum", 14.0), ("min", 1.0), ("max", 5.0), ("count", 5.0),
+])
+def test_each_aggregation_over_3_1_4_1_5(name, expected):
+    agg = AGGREGATORS[Aggregation(name)]()
+    for v in (3.0, 1.0, 4.0, 1.0, 5.0):
+        agg.add(v)
+
+    assert agg.result() == pytest.approx(expected)
+
+
+def test_every_api_aggregation_name_has_an_aggregator():
+    assert set(AGGREGATORS) == set(Aggregation)

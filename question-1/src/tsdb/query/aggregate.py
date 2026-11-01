@@ -19,10 +19,11 @@ class Avg:
         self._count = 0
 
     def add(self, value: float) -> None:
-        raise NotImplementedError
+        self._sum += value
+        self._count += 1
 
     def result(self) -> float:
-        raise NotImplementedError
+        return self._sum / self._count
 
 
 class Sum:
@@ -30,10 +31,10 @@ class Sum:
         self._sum = 0.0
 
     def add(self, value: float) -> None:
-        raise NotImplementedError
+        self._sum += value
 
     def result(self) -> float:
-        raise NotImplementedError
+        return self._sum
 
 
 class Min:
@@ -41,10 +42,10 @@ class Min:
         self._min: float | None = None
 
     def add(self, value: float) -> None:
-        raise NotImplementedError
+        self._min = value if self._min is None else min(self._min, value)
 
     def result(self) -> float:
-        raise NotImplementedError
+        return self._min
 
 
 class Max:
@@ -52,10 +53,10 @@ class Max:
         self._max: float | None = None
 
     def add(self, value: float) -> None:
-        raise NotImplementedError
+        self._max = value if self._max is None else max(self._max, value)
 
     def result(self) -> float:
-        raise NotImplementedError
+        return self._max
 
 
 class Count:
@@ -63,10 +64,10 @@ class Count:
         self._count = 0
 
     def add(self, value: float) -> None:
-        raise NotImplementedError
+        self._count += 1
 
     def result(self) -> float:
-        raise NotImplementedError
+        return float(self._count)
 
 
 AGGREGATORS: Mapping[Aggregation, AggregatorFactory] = {
