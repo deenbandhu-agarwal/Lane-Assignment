@@ -83,8 +83,14 @@ class SSTableReader:
         return self._size
 
     def may_contain(self, series_id: SeriesId, from_ts: Timestamp, to_ts: Timestamp) -> bool:
-        """Footer min/max (series and time), then the membership filter. False = surely not here."""
-        raise NotImplementedError
+        """Footer min/max (series and time), then the membership filter. False = surely not here.
+        Tombstone series ids and ranges are inside min/max and the filter, so a tombstone is never skipped."""
+        f = self._footer
+        if not (f.min_series_id <= series_id <= f.max_series_id):
+            return False
+        if to_ts < f.min_ts or from_ts > f.max_ts:
+            return False
+        return self._filter.may_contain(series_id)
 
     def tombstones_for(self, series_id: SeriesId) -> list[Tombstone]:
         return self._tombstones_by_series.get(series_id, [])

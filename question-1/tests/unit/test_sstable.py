@@ -164,3 +164,17 @@ def test_the_next_series_in_the_same_block_does_not_read_the_block_again(example
     assert cursor.blocks_read == 1
     assert list(cursor.read_series(3, *whole_minute)) == STEP2_POINTS[2:3]
     assert cursor.blocks_read == 2
+
+
+def test_may_contain_skips_by_series_range_time_range_and_bloom_but_never_hides_a_tombstone(tmp_path):
+    tables = factory(tmp_path)
+    reader = tables.open_reader(write(tables, WINDOW_10_00, 2, MANY_POINTS, [DELETE_2_AND_9, DELETE_7_ONLY]),
+                                WINDOW_10_00)
+    minute = (T_10_00, T_10_00 + MINUTE - 1)
+
+    assert reader.may_contain(1, *minute)                                  # has points
+    assert reader.may_contain(7, *minute)                                  # only a tombstone here
+    assert not reader.may_contain(10, *minute)                             # above max series id 9
+    assert not reader.may_contain(1, T_10_00 - MINUTE, T_10_00 - 1)        # before min_ts
+    assert not reader.may_contain(1, T_10_00 + MINUTE, T_10_00 + 2 * MINUTE)   # after max_ts
+    assert not reader.may_contain(3, *minute)    # inside 1..9 but absent; this filter (5 ids) answers "no" for 3
