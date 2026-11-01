@@ -27,6 +27,13 @@ def tombstone_droppable(tombstone: Tombstone, job: CompactionJob, version: Versi
     Drop only if no live table OUTSIDE the job may hold a point of these series in the range.
     Memtables are not checked: this tombstone was flushed, so every memtable entry has a bigger
     seq and cannot be hidden by it (design-qa #43)."""
+    in_job = {table.name for table in job.inputs}
+    for _, tables in version.windows:
+        for table in tables:
+            if table.name in in_job:
+                continue
+            if any(table.may_contain(s, tombstone.from_ts, tombstone.to_ts) for s in tombstone.series_ids):
+                return False
     return True
 
 

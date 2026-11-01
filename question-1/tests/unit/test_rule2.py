@@ -48,3 +48,19 @@ def test_r1_dropped_when_the_job_holds_every_table_that_could_hide_data():
     v = version((W_10, (A, B)), (W_11, (NEXT_HOUR,)))       # other hour does not overlap 10:30-10:45
 
     assert tombstone_droppable(DELETE_MUMBAI, job(A, B), v)
+
+
+LATE_IN_SAME_HOUR = FakeTable("000004.sst", {3}, T_10_00 + 40 * 60_000, T_10_00 + 41 * 60_000)
+BIG_WINDOW = FakeTable("000009.sst", {1, 2, 3}, T_06_00, T_06_00 + SIX_HOURS - 1)
+
+
+def test_r2_kept_when_a_late_file_in_the_same_window_is_not_in_the_job():
+    v = version((W_10, (A, B, LATE_IN_SAME_HOUR)))
+
+    assert not tombstone_droppable(DELETE_MUMBAI, job(A, B), v)
+
+
+def test_r2_kept_when_the_bigger_parent_window_file_still_holds_old_data():
+    v = version((W_06_12, (BIG_WINDOW,)), (W_10, (A, B)))
+
+    assert not tombstone_droppable(DELETE_MUMBAI, job(A, B), v)
