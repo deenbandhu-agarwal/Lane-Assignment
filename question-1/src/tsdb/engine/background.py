@@ -25,7 +25,8 @@ from tsdb.engine.version import VersionSet
 
 class BackgroundWorker:
     def __init__(self, versions: VersionSet, flusher: Flusher, compactor: Compactor,
-                 policy: CompactionPolicy, max_immutable_memtables: int) -> None:
+                 policy: CompactionPolicy, max_immutable_memtables: int, smallest_window_ms: int) -> None:
+        self._smallest_window_ms = smallest_window_ms
         self._versions = versions
         self._flusher = flusher
         self._compactor = compactor
@@ -38,11 +39,14 @@ class BackgroundWorker:
         self._threads: list[threading.Thread] = []
 
     def start(self) -> None:
-        raise NotImplementedError
+        self._threads = [threading.Thread(target=self._flush_loop, name="flush", daemon=True),
+                         threading.Thread(target=self._compaction_loop, name="compaction", daemon=True)]
+        for t in self._threads:
+            t.start()
 
     def wake(self) -> None:
-        """Called when a memtable becomes full or newest data time closes a window."""
-        raise NotImplementedError
+        """Called after writes: the flush thread re-checks whether the active memtable must go."""
+        self._flush_wake.set()
 
     def wait_for_room(self) -> None:
         """Writers call this before submitting: blocks while the active memtable is full AND
@@ -51,13 +55,42 @@ class BackgroundWorker:
 
     def run_until_idle(self) -> None:
         """Test/benchmark hook: flush everything, then compact until the policy returns None."""
-        raise NotImplementedError
+        if self._versions.current().active.max_seq > 0:
+            self._flush_now()
+        while (job := self._policy.pick(self._versions.current())) is not None:
+            self._compactor.run(job)
 
     def stop(self) -> None:
-        raise NotImplementedError
+        self._stop.set()
+        self._flush_wake.set()
+        self._compact_wake.set()
+        for t in self._threads:
+            t.join()
+        self._threads = []
 
     def _flush_loop(self) -> None:
-        raise NotImplementedError
+        while not self._stop.is_set():
+            self._flush_wake.wait(timeout=_RECHECK_S)
+            self._flush_wake.clear()
+            if not self._stop.is_set() and self._should_flush(self._versions.current().active):
+                self._flush_now()
 
     def _compaction_loop(self) -> None:
-        raise NotImplementedError
+        while not self._stop.is_set():
+            self._compact_wake.wait(timeout=_RECHECK_S)
+            self._compact_wake.clear()
+            while not self._stop.is_set() and (job := self._policy.pick(self._versions.current())):
+                self._compactor.run(job)
+
+    def _should_flush(self, active) -> bool:
+        return active.is_full()
+
+    def _flush_now(self) -> None:
+        frozen = self._flusher.swap_memtable()
+        self._flusher.flush(frozen)
+        with self._room:
+            self._room.notify_all()
+        self._compact_wake.set()
+
+
+_RECHECK_S = 0.5        # also re-check without a wake, so window closing is noticed on idle shards
