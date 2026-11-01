@@ -1,6 +1,7 @@
 """Startup recovery for one shard. Runs before the shard accepts requests. Depends only on ports.
 
-    1. manifest.load() (fresh dir -> empty state)
+    1. manifest.load() (fresh dir -> empty state); if config wal_count != MANIFEST.wal_count,
+       refuse to start (routing would send series to the wrong WAL; migration not supported)
     2. remove orphans: *.tmp files and tables not in MANIFEST (half flushes / compactions)
     3. series.load() -> catalog + inverted index (cut tail record dropped)
     4. open live tables (footer, tail, checksums)

@@ -1,5 +1,9 @@
 """Background thread for flush and compaction, so writes and queries never do that work inline.
-Depends on the Flusher, Compactor and CompactionPolicy it is given (no Shard)."""
+Depends on the Flusher, Compactor and CompactionPolicy it is given (no Shard).
+
+Loop: flush when the memtable is full (estimated bytes or max entries) OR its oldest window is
+closed, so old data does not live only in memory + WAL for hours; then run one compaction job if
+the policy picks one."""
 
 from __future__ import annotations
 
