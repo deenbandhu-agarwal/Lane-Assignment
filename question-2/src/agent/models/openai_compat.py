@@ -6,7 +6,8 @@ Ollama (http://localhost:11434/v1), OpenAI itself. Chosen by MODEL_BASE_URL.
 Same policy as the Gemini adapter: client-side pacing to `rpm`; 429 waits Retry-After
 unless it is longer than MAX_WAIT_S (a daily quota), which fails fast; 5xx backs off.
 A 400 "output_parse_failed" (Groq: the model produced an unparseable tool call) is
-re-sampled; any other 400 fails at once.
+re-sampled at RESAMPLE_TEMPERATURE without the seed (a deterministic retry repeats the
+same bad output); any other 400 fails at once. Such a run is no longer exactly repeatable.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from agent.types import Message, ModelReply, ToolCall, ToolSpec, Usage
 
 RETRYABLE = {429, 500, 502, 503, 504}
 MAX_WAIT_S = 60.0
+RESAMPLE_TEMPERATURE = 0.7  # only used to retry an output_parse_failed reply
 
 
 def to_wire(messages: Sequence[Message]) -> list[dict[str, Any]]:
@@ -130,7 +132,11 @@ class OpenAICompatClient:
             if r.status_code == 200:
                 return from_wire(r.json())
             if _is_parse_failure(r) and attempt < self._max_retries:
-                continue  # model emitted an unparseable tool call; sampling again usually fixes it
+                # The model emitted an unparseable tool call. At temperature 0 with a fixed
+                # seed the same request reproduces it (eval run 3, u3), so re-sample warmer.
+                payload["temperature"] = RESAMPLE_TEMPERATURE
+                payload.pop("seed", None)
+                continue
             if r.status_code in RETRYABLE and attempt < self._max_retries:
                 wait = _retry_after(r, attempt)
                 if wait > MAX_WAIT_S:

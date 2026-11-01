@@ -86,6 +86,14 @@ def test_output_parse_failed_is_resampled():
     c, seen, sleeps = client([bad, ok({"content": "not found"})])
     assert c.complete([Message("user", "q")], []).text == "not found"
     assert len(seen) == 2 and sleeps == []
+    assert seen[0]["temperature"] == 0 and seen[0]["seed"] == 42
+    assert seen[1]["temperature"] == 0.7 and "seed" not in seen[1]  # same request would repeat the bad output
+
+
+def test_temperature_stays_zero_on_ordinary_retries():
+    c, seen, _ = client([httpx.Response(503), ok({"content": "ok"})])
+    c.complete([Message("user", "q")], [])
+    assert [b["temperature"] for b in seen] == [0, 0]
 
 
 def test_output_parse_failed_gives_up_after_max_retries():
