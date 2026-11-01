@@ -1,13 +1,15 @@
 """Flush: immutable memtable -> one new table PER TIME WINDOW it touches. Depends only on ports.
 
-Rule: every table sits inside exactly one window of the SMALLEST step (config.window_steps_ms[0]).
-A memtable crossing a window edge, or holding late points, therefore produces 2+ tables.
+Rule: every table sits inside exactly one window. Points go to windows of the SMALLEST step
+(config.window_steps_ms[0]); a memtable crossing a window edge, or holding late points, therefore
+produces 2+ tables. A delete piece for an older, bigger window (e.g. a 1-day file) becomes a
+delete-only table in that bigger window; compaction merges it like a late file.
 
 Order (each step is safe to crash after; README crash table):
     1. swap: freeze active memtable, new memtable from factory, wal.rotate_all()  -> hit(MEMTABLE_FLUSH)
     2. walk the memtable once (newest version per key); route each point to the writer of its
-       window (writers opened lazily); cut each tombstone with Tombstone.clip(window) into every
-       window it covers                                                          -> hit(SSTABLE_WRITE)
+       window (writers opened lazily); cut each tombstone into the windows that may hold older
+       data: this flush's windows + live tables' windows (split_by_window, design-qa #44)    -> hit(SSTABLE_WRITE)
     3. tables.publish each .tmp (rename + dir fsync)
     4. manifest.commit: add the new tables under their windows, raise last_flushed_seq and
        newest_data_ts                                                            -> hit(MANIFEST_UPDATE)
@@ -17,25 +19,32 @@ Order (each step is safe to crash after; README crash table):
 from __future__ import annotations
 
 import threading
+from collections.abc import Iterable
 
 from tsdb.engine.version import VersionSet
 from tsdb.model import Point, TimeWindow, Tombstone
 from tsdb.ports import FaultInjector, FileOps, ManifestPort, MemtableFactory, MemtablePort, TableFactory, WalPort
 
 
-def split_by_window(points: list[Point], tombstones: list[Tombstone],
-                    window_ms: int) -> dict[TimeWindow, tuple[list[Point], list[Tombstone]]]:
-    """Pure: group points by their smallest window and clip tombstones into every window they cover.
+def split_by_window(points: list[Point], tombstones: list[Tombstone], window_ms: int,
+                    live_windows: Iterable[TimeWindow]) -> dict[TimeWindow, tuple[list[Point], list[Tombstone]]]:
+    """Pure: group points by their smallest window; cut each tombstone ONLY into windows that may
+    hold data older than it (design-qa #44):
+        - the smallest windows of this flush's points
+        - the windows of live tables (at their own size: one piece for a 1-day file, not 24)
+    Older data can be nowhere else: memtables flush in order, so every earlier memtable is already
+    a live table. An all-time delete (0 .. i64 max) therefore makes a few pieces, not one per window.
     Order inside each group stays (series_id, timestamp). Windows come out in time order."""
     groups: dict[TimeWindow, tuple[list[Point], list[Tombstone]]] = {}
     for p in points:
         groups.setdefault(TimeWindow.containing(p.timestamp, window_ms), ([], []))[0].append(p)
+    data_windows = set(groups) | set(live_windows)
     for t in tombstones:
-        start = TimeWindow.containing(t.from_ts, window_ms).start_ms
-        for window_start in range(start, t.to_ts + 1, window_ms):
-            window = TimeWindow(window_ms, window_start)
-            groups.setdefault(window, ([], []))[1].append(t.clip(window))
-    return dict(sorted(groups.items()))
+        for window in data_windows:
+            piece = t.clip(window)
+            if piece is not None:
+                groups.setdefault(window, ([], []))[1].append(piece)
+    return dict(sorted(groups.items(), key=lambda item: (item[0].start_ms, item[0].size_ms)))
 
 
 class Flusher:
