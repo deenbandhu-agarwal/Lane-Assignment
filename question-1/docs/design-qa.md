@@ -171,7 +171,7 @@ Legend — **Outcome:** `decision` (changed the design) · `clarified` (no desig
 
 ### 38. Must late points go to their own window (must flush split by window)?
 - **Answer:** Not for correctness (read rule + general tombstone-drop rule keep answers right either way), only for efficiency. Cassandra's TWCS does not split; a file is placed in the window of its max timestamp, so one late point stretches the file's range (worse time pruning), its old window can never become one file, and tombstones there may never be droppable; Cassandra documents that TWCS handles out-of-order writes badly. Splitting keeps every file inside one window at the cost of extra small files. Middle ground: split only points more than one window late. Very late points re-open closed windows; limit re-compaction of closed windows (≥ 2 files and periodic).
-- **Outcome:** pending choice: always split vs split only very late points.
+- **Outcome:** decision: **split only points more than one window late** (a memtable that merely crosses a window edge stays one file; really late points get their own file in their window).
 
 ### Tooling
 - A prototype dump tool (outside this repo) printed SSTable / WAL / series.log / MANIFEST files as text (`--hex` for raw bytes) and showed a cut WAL record as "replay stops here". The engine ships the same as `tsdb-dump` (`src/tsdb/tools/dump.py`).
