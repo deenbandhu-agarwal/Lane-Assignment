@@ -25,10 +25,26 @@ class SwapLock:
 
     @contextmanager
     def shared(self) -> Iterator[None]:
-        raise NotImplementedError
-        yield
+        with self._cond:
+            self._cond.wait_for(lambda: not self._exclusive and not self._exclusive_waiting)
+            self._shared += 1
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._shared -= 1
+                self._cond.notify_all()
 
     @contextmanager
     def exclusive(self) -> Iterator[None]:
-        raise NotImplementedError
-        yield
+        with self._cond:
+            self._exclusive_waiting += 1
+            self._cond.wait_for(lambda: not self._exclusive and self._shared == 0)
+            self._exclusive_waiting -= 1
+            self._exclusive = True
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._exclusive = False
+                self._cond.notify_all()
