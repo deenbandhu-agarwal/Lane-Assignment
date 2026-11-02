@@ -6,8 +6,8 @@ produces 2+ tables. A delete piece for an older, bigger window (e.g. a 1-day fil
 delete-only table in that bigger window; compaction merges it like a late file.
 
 Order (each step is safe to crash after; README crash table):
-    1. swap, under swap_lock.exclusive() (design-qa #45, D2): freeze active memtable, new memtable
-       from factory, wal.rotate_all(), install Version(new active, frozen as immutable)
+    1. swap, under the swap lock (design-qa #45, D2; waits for the WAL group in flight): freeze active memtable, new memtable
+       from factory, wal.rotate(), install Version(new active, frozen as immutable)
                                                                                  -> hit(MEMTABLE_FLUSH)
     2. walk the memtable once (newest version per key); route each point to the writer of its
        window (writers opened lazily); cut each tombstone into the windows that may hold older
@@ -26,7 +26,6 @@ from pathlib import Path
 from collections.abc import Iterable
 
 from tsdb.engine.state import Edit, LiveState
-from tsdb.engine.swap_lock import SwapLock
 from tsdb.engine.version import VersionSet
 from tsdb.model import Point, TimeWindow, Tombstone
 from tsdb.faults import CrashPoint
@@ -57,7 +56,7 @@ def split_by_window(points: list[Point], tombstones: list[Tombstone], window_ms:
 class Flusher:
     def __init__(self, versions: VersionSet, wal: WalPort, state: LiveState, tables: TableFactory,
                  new_memtable: MemtableFactory, files: FileOps, faults: FaultInjector,
-                 swap_lock: SwapLock, smallest_window_ms: int) -> None:
+                 swap_lock: threading.Lock, smallest_window_ms: int) -> None:
         self._versions = versions
         self._wal = wal
         self._state = state
@@ -72,13 +71,13 @@ class Flusher:
 
     def swap_memtable(self) -> MemtablePort:
         """Step 1. Returns the frozen memtable (now immutable, still readable)."""
-        with self._swap_lock.exclusive():
+        with self._swap_lock:
             current = self._versions.current()
             frozen = current.active
             frozen.freeze()
             active = self._new_memtable()
             segment = self._state.next_segment()
-            old_files = self._wal.rotate_all(segment, active)
+            old_files = [self._wal.rotate(segment, active)]
             self._segments[id(frozen)] = (segment - 1, old_files)
             self._state.install_memtables(active, (frozen, *current.immutables))
         self._faults.hit(CrashPoint.MEMTABLE_FLUSH)

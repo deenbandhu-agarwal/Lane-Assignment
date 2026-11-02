@@ -6,7 +6,6 @@ import time
 import pytest
 
 from tsdb.engine.seq import SequenceCounter
-from tsdb.engine.swap_lock import SwapLock
 from tsdb.errors import FatalStorageError
 from tsdb.faults import NoFaults
 from tsdb.model import Point
@@ -35,7 +34,7 @@ def make_writer(tmp_path, events, applied, files=None):
     segment = WalSegment(tmp_path / "000001.log", files)
     segment.open()
     events.clear()                                            # ignore the directory fsync at create
-    writer = WalWriter(0, segment, SequenceCounter(), SwapLock(),
+    writer = WalWriter(segment, SequenceCounter(), threading.Lock(),
                        apply=applied.extend, before_fsync=lambda: events.append("series.log fsync"),
                        faults=NoFaults())
     writer.start()

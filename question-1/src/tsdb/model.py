@@ -124,8 +124,7 @@ class ManifestState:
     version: int                          # +1 on every commit
     next_file_no: int                     # next SSTable file number
     last_flushed_seq: int                 # every seq <= this is inside some SSTable
-    wal_count: int                        # N; must not change without migration (routing)
-    wal_segment: int                      # current segment number, shared by all N WALs
+    wal_segment: int                      # oldest WAL segment still needed for replay
     newest_data_ts: Timestamp = 0         # newest timestamp ever flushed (drives window closing)
     windows: tuple[tuple[TimeWindow, tuple[str, ...]], ...] = ()   # window -> live file names
 

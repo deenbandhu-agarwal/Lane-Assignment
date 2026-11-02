@@ -249,6 +249,11 @@ Legend — **Outcome:** `decision` (changed the design) · `clarified` (no desig
 - Reads (1,000 series × 6 h, compacted): 1 series raw for 1 h is 0.8 ms (1 table, 6 skipped by time, 4 blocks); `avg` per 5 min over 333 series for 1 h is ~135 ms. Bloom false-positive rate measured 1.00% for a 1% target.
 - **Outcome:** keep `wal_count = 1`. More WALs pay off only where fsyncs really run in parallel (e.g. NVMe on Linux) AND the memtable is split per WAL; both are future work. Raw numbers: `bench/results.md` (`uv run python bench/run.py`).
 
+### 55. If 1 WAL is fastest, should the N-WAL code stay?
+- **Answer:** No. Code that only serves a slower setup is cost without benefit. Removed: the WAL router and per-WAL routing, the per-WAL split of writes and deletes, `wal_count` in config and MANIFEST (and the "wal_count changed" startup error), the out-of-order part of the visible seq (#45 D1: with one writer thread, groups are applied in seq order), the shared/exclusive `SwapLock` (#45 D2 is now a plain lock: one writer, one swapper), the `wal/<i>/` folder level, and the crash-test runs for 2 WALs. Kept: group commit, the swap lock (as a plain lock), the two background threads, the visible seq as "last applied".
+- About 330 lines of code and tests are gone. The benchmark after the change: ~75K points/s, the same as before. All crash tests pass.
+- **Outcome:** decision. The reasoning for N WALs (#33–#36, #45, #54) stays here as "designed, measured, removed". Bringing it back needs N WAL writers AND one memtable per WAL (else the memtable lock is the limit, #54), on a disk where fsyncs run in parallel.
+
 ### Tooling
 - A prototype dump tool (outside this repo) printed SSTable / WAL / series.log / MANIFEST files as text (`--hex` for raw bytes) and showed a cut WAL record as "replay stops here". The engine ships the same as `tsdb-dump` (`src/tsdb/tools/dump.py`).
 

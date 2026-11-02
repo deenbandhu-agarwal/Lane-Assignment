@@ -15,7 +15,7 @@ T_10_00 = 1_730_368_800_000
 T_11_00 = 1_730_372_400_000
 
 STATE_V4 = ManifestState(
-    version=4, next_file_no=8, last_flushed_seq=10, wal_count=4, wal_segment=3,
+    version=4, next_file_no=8, last_flushed_seq=10, wal_segment=3,
     newest_data_ts=1_730_372_460_000,
     windows=(
         (TimeWindow(SIX_HOURS, T_06_00), ("000006.sst",)),
@@ -49,7 +49,7 @@ class StopAt:
             raise SystemExit(f"crash at {point}")
 
 
-STATE_V5 = ManifestState(version=5, next_file_no=9, last_flushed_seq=14, wal_count=4, wal_segment=4,
+STATE_V5 = ManifestState(version=5, next_file_no=9, last_flushed_seq=14, wal_segment=4,
                          newest_data_ts=1_730_372_520_000,
                          windows=((TimeWindow(SIX_HOURS, T_06_00), ("000006.sst", "000008.sst")),))
 

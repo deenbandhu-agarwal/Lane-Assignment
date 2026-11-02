@@ -11,7 +11,6 @@ from tsdb.compaction.policy import TimeWindowPolicy
 from tsdb.engine.background import BackgroundWorker
 from tsdb.engine.flush import Flusher
 from tsdb.engine.state import LiveState
-from tsdb.engine.swap_lock import SwapLock
 from tsdb.engine.version import Version, VersionSet
 from tsdb.faults import NoFaults
 from tsdb.memtable.memtable import Memtable
@@ -38,12 +37,12 @@ def eventually(condition, timeout=2.0):
 
 
 class FakeWal:
-    def __init__(self):
-        self.memtable = None
+    def __init__(self, tmp):
+        self.memtable, self.tmp = None, tmp
 
-    def rotate_all(self, new_segment_no, new_memtable):
+    def rotate(self, new_segment_no, new_memtable):
         self.memtable = new_memtable
-        return []
+        return self.tmp / f"{new_segment_no - 1:06d}.log"      # never written: removing it is a no-op
 
 
 class Engine:
@@ -56,8 +55,8 @@ class Engine:
         self.versions = VersionSet(Version(0, new_memtable(), (), (), 0), on_obsolete=lambda t: None)
         tables = SSTableFactory(layout.sstable, files, faults, BloomFilterFactory(), 4096, 0.01)
         state = LiveState(ManifestStore(layout.manifest, files, faults), self.versions,
-                          ManifestState(0, 1, 0, 1, 1), active_segment=1)
-        flusher = Flusher(self.versions, FakeWal(), state, tables, new_memtable, files, faults, SwapLock(), MINUTE)
+                          ManifestState(0, 1, 0, 1), active_segment=1)
+        flusher = Flusher(self.versions, FakeWal(tmp_path), state, tables, new_memtable, files, faults, threading.Lock(), MINUTE)
         policy = TimeWindowPolicy((MINUTE, 2 * MINUTE, 4 * MINUTE), 2, 0.10, 4 * MINUTE)
         self.worker = BackgroundWorker(self.versions, flusher, Compactor(self.versions, state, tables, faults),
                                        policy, max_immutable_memtables=1, smallest_window_ms=MINUTE)

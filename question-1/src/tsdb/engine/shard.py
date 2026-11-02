@@ -38,7 +38,7 @@ class Shard:
     def write(self, points: Iterable[tuple[SeriesKey, Timestamp, float]]) -> int:
         """Already validated. Resolve/create series ids, hand to the WAL, block until durable."""
         self._background.wait_for_room()
-        puts = [(key, self._series.get_or_create(key)[0], ts, value) for key, ts, value in points]
+        puts = [(self._series.get_or_create(key)[0], ts, value) for key, ts, value in points]
         self._wal.write(puts)
         self._background.wake()
         return len(puts)
@@ -48,7 +48,7 @@ class Shard:
         ids = evaluate(expr, self._index, metric)
         if ids:
             self._background.wait_for_room()
-            self._wal.delete([(self._series.key_of(i), i) for i in ids], from_ts, to_ts)
+            self._wal.delete(ids, from_ts, to_ts)
             self._background.wake()
         return len(ids)
 

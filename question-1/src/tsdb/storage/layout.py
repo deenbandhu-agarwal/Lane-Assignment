@@ -2,9 +2,9 @@
 (directory creation and orphan cleanup go through ports.FileOps in Recovery).
 
     <shard_dir>/
-      MANIFEST                 live files, wal_count, segment number, last seq
+      MANIFEST                 live files, WAL segment number, last flushed seq
       series.log               series id <-> series key (append-only, framed records)
-      wal/<i>/<segment>.log    WAL i of N, one segment per memtable
+      wal/<segment>.log        the WAL, one segment per memtable
       sst/<size_ms>/<start_ms>/<file_no>.sst   immutable sorted tables, one time window each
 """
 
@@ -28,8 +28,8 @@ class ShardLayout:
     def series_log(self) -> Path:
         return self.root / "series.log"
 
-    def wal_segment(self, wal_index: int, segment: int) -> Path:
-        return self.root / "wal" / str(wal_index) / f"{segment:06d}.log"
+    def wal_segment(self, segment: int) -> Path:
+        return self.root / "wal" / f"{segment:06d}.log"
 
     def sstable(self, window: TimeWindow, file_no: int) -> Path:
         return self.root / "sst" / window.label() / f"{file_no:06d}.sst"

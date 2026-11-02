@@ -22,11 +22,10 @@ CASES = [                                 # (crash point, which hit): late enoug
 ]
 
 
-@pytest.mark.parametrize("wal_count", [1, 2])
 @pytest.mark.parametrize("crash_at,after", CASES, ids=[c for c, _ in CASES])
-def test_crash_point(tmp_path, crash_at, after, wal_count):
+def test_crash_point(tmp_path, crash_at, after):
     data = tmp_path / "data"
-    server = Server(data, wal_count, crash_at, after)
+    server = Server(data, crash_at, after)
     model = Model()
     client = Client(server.url, model)
     for op in workload(CITIES, steps=400, seed=7):
@@ -34,7 +33,7 @@ def test_crash_point(tmp_path, crash_at, after, wal_count):
             break
     assert server.killed_by_sigkill(), f"{crash_at} #{after} was never reached:\n{server.log.read_text()}"
 
-    again = Server(data, wal_count)
+    again = Server(data)
     try:
         check(read_all(again.url), model)
         model.in_flight = []                                   # the restart decided; take what is there

@@ -5,7 +5,6 @@ import random
 import pytest
 
 from tsdb.engine.recovery import Recovery
-from tsdb.errors import StartupError
 from tsdb.faults import NoFaults
 from tsdb.memtable.memtable import Memtable
 from tsdb.memtable.skiplist import SkipList
@@ -16,7 +15,7 @@ from tsdb.storage.fileio import OsFileOps
 from tsdb.storage.layout import ShardLayout
 from tsdb.storage.manifest import ManifestStore
 from tsdb.wal.record import encode_delete, encode_put, frame
-from tsdb.wal.wal_set import WalReplayer
+from tsdb.wal.wal import WalReplayer
 
 MINUTE = 60_000
 T = 1_730_368_800_000
@@ -36,21 +35,20 @@ def new_memtable():
 
 
 class Dir:
-    def __init__(self, tmp_path, wal_count=1):
+    def __init__(self, tmp_path):
         files = OsFileOps()
         self.root, self.layout, self.files = tmp_path, ShardLayout(tmp_path), files
         self.manifest = ManifestStore(self.layout.manifest, files, NoFaults())
         self.tables = SSTableFactory(self.layout.sstable, files, NoFaults(), BloomFilterFactory(), 4096, 0.01)
         self.series = FakeSeries()
-        self.wal_count = wal_count
 
-    def recover(self, wal_count=None):
+    def recover(self):
         replayer = WalReplayer(self.files, self.layout.wal_segment)
         return Recovery(self.layout, self.manifest, self.series, self.tables, replayer.replay, new_memtable,
-                        self.files, wal_count or self.wal_count).run()
+                        self.files).run()
 
-    def wal(self, segment, *entries, wal=0):
-        path = self.layout.wal_segment(wal, segment)
+    def wal(self, segment, *entries):
+        path = self.layout.wal_segment(segment)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"".join(frame(encode_put(e) if isinstance(e, Point) else encode_delete(e)) for e in entries))
         return path
@@ -88,7 +86,7 @@ def test_r2_acknowledged_writes_and_deletes_come_back_from_the_wal(tmp_path):
 def test_r3_after_a_flush_files_come_from_the_manifest_and_only_newer_wal_segments_are_replayed(tmp_path):
     d = Dir(tmp_path)
     d.table(1, [Point(1, T, 1, 30.1), Point(3, T, 2, 32.5)])
-    d.manifest.commit(ManifestState(version=1, next_file_no=2, last_flushed_seq=2, wal_count=1, wal_segment=2,
+    d.manifest.commit(ManifestState(version=1, next_file_no=2, last_flushed_seq=2, wal_segment=2,
                                     newest_data_ts=T, windows=((W_10_00, ("000001.sst",)),)))
     old = d.wal(1, Point(1, T, 1, 30.1), Point(3, T, 2, 32.5))     # crash right after the commit:
     d.wal(2, Point(1, T, 3, 29.9))                                  # segment 1 was not deleted yet
@@ -111,7 +109,7 @@ def test_r4_half_written_and_never_listed_files_are_deleted_and_listed_files_kep
     half = live.with_name("000003.sst.tmp")
     half.write_bytes(b"half a table")                              # flush crashed while writing
     manifest_tmp = d.layout.manifest.with_name("MANIFEST.tmp")
-    d.manifest.commit(ManifestState(version=1, next_file_no=2, last_flushed_seq=1, wal_count=1, wal_segment=1,
+    d.manifest.commit(ManifestState(version=1, next_file_no=2, last_flushed_seq=1, wal_segment=1,
                                     newest_data_ts=T, windows=((W_10_00, ("000001.sst",)),)))
     manifest_tmp.write_bytes(b"{ never renamed")
 
@@ -120,11 +118,3 @@ def test_r4_half_written_and_never_listed_files_are_deleted_and_listed_files_kep
     assert live.exists()
     assert not unlisted.exists() and not half.exists() and not manifest_tmp.exists()
     assert sorted(p.name for p in state.removed_orphans) == ["000002.sst", "000003.sst.tmp", "MANIFEST.tmp"]
-
-
-def test_r5_a_different_wal_count_than_the_manifest_refuses_to_start(tmp_path):
-    d = Dir(tmp_path)
-    d.manifest.commit(ManifestState(version=1, next_file_no=1, last_flushed_seq=0, wal_count=1, wal_segment=1))
-
-    with pytest.raises(StartupError, match="wal_count"):
-        d.recover(wal_count=4)

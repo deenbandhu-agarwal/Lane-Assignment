@@ -13,8 +13,7 @@ This module imports only `tsdb.model`, so it can never create an import cycle.
     MembershipFilter(+F) sstable.bloom.BloomFilter           cuckoo / xor filter
     TableFactory/R/W     sstable.factory.SSTableFactory      another file format version
     ManifestPort         storage.manifest.ManifestStore      binary manifest, log-structured
-    WalPort              wal.wal_set.WalSet                  single WAL, replicated WAL
-    WalRouter            wal.routing.HashWalRouter           other hash
+    WalPort              wal.wal.Wal                         replicated WAL, N WALs (design-qa #54)
     ShardRouter          engine.routing.SingleShardRouter    consistent hashing
     PostingSource        catalog.inverted_index              roaring bitmaps
     SeriesResolver       catalog.series_catalog              —
@@ -169,16 +168,10 @@ class ManifestPort(Protocol):
 class WalPort(Protocol):
     """The write-ahead log as seen by the shard."""
 
-    def write(self, puts: list[tuple[SeriesKey, SeriesId, Timestamp, float]]) -> None: ...
-    def delete(self, keys_and_ids: list[tuple[SeriesKey, SeriesId]], from_ts: Timestamp,
-               to_ts: Timestamp) -> None: ...
-    def rotate_all(self, new_segment_no: int, new_memtable: MemtablePort) -> list[Path]: ...
+    def write(self, puts: list[tuple[SeriesId, Timestamp, float]]) -> None: ...
+    def delete(self, series_ids: list[SeriesId], from_ts: Timestamp, to_ts: Timestamp) -> None: ...
+    def rotate(self, new_segment_no: int, new_memtable: MemtablePort) -> Path: ...
     def close(self) -> None: ...
-
-
-@runtime_checkable
-class WalRouter(Protocol):
-    def route(self, key: SeriesKey) -> int: ...
 
 
 @runtime_checkable

@@ -54,7 +54,6 @@ def _to_json(state: ManifestState) -> dict:
         "version": state.version,
         "next_file_no": state.next_file_no,
         "last_flushed_seq": state.last_flushed_seq,
-        "wal_count": state.wal_count,
         "wal_segment": state.wal_segment,
         "newest_data_ts": state.newest_data_ts,
         "windows": [{"size_ms": w.size_ms, "start_ms": w.start_ms, "files": list(files)}
@@ -65,5 +64,5 @@ def _to_json(state: ManifestState) -> dict:
 def _from_json(d: dict) -> ManifestState:
     return ManifestState(
         version=d["version"], next_file_no=d["next_file_no"], last_flushed_seq=d["last_flushed_seq"],
-        wal_count=d["wal_count"], wal_segment=d["wal_segment"], newest_data_ts=d["newest_data_ts"],
+        wal_segment=d["wal_segment"], newest_data_ts=d["newest_data_ts"],
         windows=tuple((TimeWindow(w["size_ms"], w["start_ms"]), tuple(w["files"])) for w in d["windows"]))

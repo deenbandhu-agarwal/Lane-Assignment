@@ -13,6 +13,7 @@ Tests call `build_database(config, files=FailingFsyncOps(), faults=...)` to inje
 from __future__ import annotations
 
 import random
+import threading
 from collections.abc import Callable, Mapping
 
 from tsdb.catalog.inverted_index import InvertedIndex
@@ -28,7 +29,6 @@ from tsdb.engine.routing import SingleShardRouter
 from tsdb.engine.seq import SequenceCounter
 from tsdb.engine.shard import Shard
 from tsdb.engine.state import LiveState
-from tsdb.engine.swap_lock import SwapLock
 from tsdb.engine.version import Version, VersionSet
 from tsdb.faults import EnvFaults
 from tsdb.memtable.memtable import Memtable
@@ -42,8 +42,7 @@ from tsdb.sstable.factory import SSTableFactory
 from tsdb.storage.fileio import OsFileOps
 from tsdb.storage.layout import ShardLayout
 from tsdb.storage.manifest import ManifestStore
-from tsdb.wal.routing import HashWalRouter
-from tsdb.wal.wal_set import WalReplayer, WalSet, new_segment
+from tsdb.wal.wal import Wal, WalReplayer, new_segment
 from tsdb.wal.writer import WalWriter
 
 OrderedStoreFactory = Callable[[random.Random, EngineConfig], OrderedStore]
@@ -69,8 +68,7 @@ def memtable_factory(config: EngineConfig) -> MemtableFactory:
 def build_shard(config: EngineConfig, layout: ShardLayout, files: FileOps, faults: FaultInjector) -> Shard:
     """Wire one shard, in dependency order (recovery first: everything else starts from its result).
     The returned shard is running: WAL writer threads and the two background threads are started."""
-    for wal in range(config.wal_count):
-        files.make_dirs(layout.wal_segment(wal, 0).parent)
+    files.make_dirs(layout.wal_segment(0).parent)
     index = InvertedIndex()
     catalog = SeriesCatalog(layout.series_log, files, on_new_series=index.add)
     manifest = ManifestStore(layout.manifest, files, faults)
@@ -78,14 +76,13 @@ def build_shard(config: EngineConfig, layout: ShardLayout, files: FileOps, fault
                             config.block_target_bytes, config.bloom_false_positive_rate)
     new_memtable = memtable_factory(config)
     recovered = Recovery(layout, manifest, catalog, tables, WalReplayer(files, layout.wal_segment).replay,
-                         new_memtable, files, config.wal_count).run()
+                         new_memtable, files).run()
 
     seq = SequenceCounter(recovered.last_seq)
-    swap_lock = SwapLock()
-    writers = [WalWriter(i, new_segment(layout.wal_segment(i, recovered.active_segment), files), seq,
-                         swap_lock, recovered.memtable.apply, before_fsync=catalog.sync, faults=faults)
-               for i in range(config.wal_count)]
-    wal = WalSet(writers, HashWalRouter(config.wal_count), layout.wal_segment, files)
+    swap_lock = threading.Lock()          # WAL group commit vs memtable swap (design-qa #45 D2)
+    writer = WalWriter(new_segment(layout.wal_segment(recovered.active_segment), files), seq, swap_lock,
+                       recovered.memtable.apply, before_fsync=catalog.sync, faults=faults)
+    wal = Wal(writer, layout.wal_segment, files)
 
     def on_obsolete(table: TableReader) -> None:
         table.close()
@@ -101,8 +98,7 @@ def build_shard(config: EngineConfig, layout: ShardLayout, files: FileOps, fault
         config.max_immutable_memtables, smallest)
     new_executor = lambda snapshot: QueryExecutor(snapshot, catalog, AGGREGATORS,
                                                   config.max_query_series, config.max_query_points)
-    for writer in writers:
-        writer.start()
+    writer.start()
     background.start()
     return Shard(catalog, index, wal, versions, seq, background, new_executor)
 

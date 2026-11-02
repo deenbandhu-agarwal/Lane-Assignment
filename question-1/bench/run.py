@@ -1,9 +1,10 @@
 """Benchmark: `uv run python bench/run.py [--seconds 5] [--out bench/results.md]`
 
 Measures, on this machine, with real fsync:
-  1. write throughput in-process (engine only): 8 writer threads, 100-point batches,
-     wal_count 1 / 2 / 4 -> points/s, batch latency p50/p99, points per fsync (group commit)
-  2. the same write load over HTTP (uvicorn child process, wal_count 1): what a client sees
+  1. write throughput in-process (engine only): 8 writer threads, 100-point batches
+     -> points/s, batch latency p50/p99, points per fsync (group commit)
+  2. the same write load over HTTP (uvicorn child process): what a client sees
+(1 vs 2 vs 4 WALs was measured before multi-WAL was removed: design-qa #54.)
   3. read latency after data is flushed and compacted: 1 series raw (1 h), avg over 100 series
   4. Bloom filter false-positive rate (target 1 %)
 Numbers depend on the disk (fsync cost) and core count; the report prints both.
@@ -86,19 +87,16 @@ def pct(values: list[float], p: float) -> float:
 
 
 def bench_engine(seconds: float) -> list[dict]:
-    rows = []
-    for wal_count in (1, 2, 4):
-        with tempfile.TemporaryDirectory() as d:
-            files = CountingFiles()
-            db = build_database(EngineConfig(data_dir=Path(d), wal_count=wal_count), files=files)
-            db.write([(k, T, 0.0) for k in SERIES])                     # create series outside the timing
-            files.fsyncs = 0
-            points, lat = run_writers(db.write, seconds)
-            fsyncs = files.fsyncs
-            db.close()
-        rows.append({"wal_count": wal_count, "points_s": points / seconds, "p50": pct(lat, 50),
-                     "p99": pct(lat, 99), "per_fsync": points / max(fsyncs, 1)})
-    return rows
+    with tempfile.TemporaryDirectory() as d:
+        files = CountingFiles()
+        db = build_database(EngineConfig(data_dir=Path(d)), files=files)
+        db.write([(k, T, 0.0) for k in SERIES])                     # create series outside the timing
+        files.fsyncs = 0
+        points, lat = run_writers(db.write, seconds)
+        fsyncs = files.fsyncs
+        db.close()
+    return [{"points_s": points / seconds, "p50": pct(lat, 50), "p99": pct(lat, 99),
+             "per_fsync": points / max(fsyncs, 1)}]
 
 
 def bench_http(seconds: float) -> dict:
@@ -185,12 +183,12 @@ def main() -> None:
         "",
         "## Writes, engine in-process",
         "",
-        "| WALs | points/s | batch p50 ms | batch p99 ms | points per fsync |",
-        "|---:|---:|---:|---:|---:|",
-        *[f"| {r['wal_count']} | {r['points_s']:,.0f} | {r['p50']:.1f} | {r['p99']:.1f} | {r['per_fsync']:,.0f} |"
+        "| points/s | batch p50 ms | batch p99 ms | points per fsync |",
+        "|---:|---:|---:|---:|",
+        *[f"| {r['points_s']:,.0f} | {r['p50']:.1f} | {r['p99']:.1f} | {r['per_fsync']:,.0f} |"
           for r in engine],
         "",
-        "## Writes over HTTP (1 WAL, JSON, one client per writer thread)",
+        "## Writes over HTTP (JSON, one client per writer thread)",
         "",
         "| points/s | batch p50 ms | batch p99 ms |",
         "|---:|---:|---:|",

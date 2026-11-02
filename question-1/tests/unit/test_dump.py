@@ -56,7 +56,7 @@ def test_series_log_and_manifest(data, capsys):
     assert "series 1 = temperature{city=Delhi}" in out and "series 2 = temperature{city=Mumbai}" in out
 
     _, out = run(capsys, data / "MANIFEST")
-    assert '"wal_count": 1' in out and "crc32 OK" in out
+    assert '"wal_segment": 2' in out and "crc32 OK" in out
 
 
 def test_a_folder_dumps_every_file_and_a_corrupt_table_is_reported_not_crashed(data, capsys):

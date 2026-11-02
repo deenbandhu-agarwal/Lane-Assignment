@@ -15,14 +15,13 @@ THREADS = 4
 ROUNDS = 20
 
 
-@pytest.mark.parametrize("wal_count", [1, 2])
-def test_kill9_during_writes_loses_no_acked_write(tmp_path, wal_count):
+def test_kill9_during_writes_loses_no_acked_write(tmp_path):
     data = tmp_path / "data"
     rng = random.Random(9)
     models = [Model() for _ in range(THREADS)]        # each thread owns its cities
     confirmed_total = 0
     for round_no in range(ROUNDS):
-        server = Server(data, wal_count)
+        server = Server(data)
         if round_no:                                   # what the last crash left must match
             actual = read_all(server.url)
             for t, model in enumerate(models):
@@ -48,7 +47,7 @@ def test_kill9_during_writes_loses_no_acked_write(tmp_path, wal_count):
             th.join(timeout=30)
         confirmed_total += sum(len(m.confirmed) for m in models)
 
-    final = Server(data, wal_count)
+    final = Server(data)
     try:
         actual = read_all(final.url)
         for t, model in enumerate(models):

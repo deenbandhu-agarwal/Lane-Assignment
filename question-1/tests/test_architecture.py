@@ -28,8 +28,7 @@ SWAPPABLE = {
     "tsdb.storage.manifest": "tsdb.storage",
     "tsdb.catalog.inverted_index": "tsdb.catalog",
     "tsdb.catalog.series_catalog": "tsdb.catalog",
-    "tsdb.wal.wal_set": "tsdb.wal",
-    "tsdb.wal.routing": "tsdb.wal",
+    "tsdb.wal.wal": "tsdb.wal",
     "tsdb.engine.routing": "tsdb.engine",
 }
 
@@ -68,7 +67,6 @@ def test_default_implementations_satisfy_ports(tmp_path):
     from tsdb.sstable.bloom import BloomFilter, BloomFilterFactory
     from tsdb.storage.fileio import OsFileOps
     from tsdb.storage.manifest import ManifestStore
-    from tsdb.wal.routing import HashWalRouter
 
     store = SkipList(random.Random(1))
     files = OsFileOps()
@@ -81,7 +79,6 @@ def test_default_implementations_satisfy_ports(tmp_path):
         (NoFaults(), ports.FaultInjector),
         (ManifestStore(tmp_path / "MANIFEST", files, NoFaults()), ports.ManifestPort),
         (InvertedIndex(), ports.PostingSource),
-        (HashWalRouter(1), ports.WalRouter),
         (SingleShardRouter(), ports.ShardRouter),
     ]
     missing = [f"{type(obj).__name__} !~ {port.__name__}" for obj, port in checks if not isinstance(obj, port)]

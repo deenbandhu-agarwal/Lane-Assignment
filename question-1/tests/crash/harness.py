@@ -40,11 +40,11 @@ def free_port() -> int:
 
 
 class Server:
-    def __init__(self, data_dir: Path, wal_count: int = 1, crash_at: str | None = None, crash_after: int = 1):
+    def __init__(self, data_dir: Path, crash_at: str | None = None, crash_after: int = 1):
         self.port = free_port()
         self.log = data_dir.parent / f"server-{self.port}.log"
         env = {**os.environ, **SMALL_ENGINE, "TSDB_DATA_DIR": str(data_dir), "TSDB_PORT": str(self.port),
-               "TSDB_HOST": "127.0.0.1", "TSDB_WAL_COUNT": str(wal_count)}
+               "TSDB_HOST": "127.0.0.1"}
         env.pop("TSDB_CRASH_AT", None)
         if crash_at:
             env |= {"TSDB_CRASH_AT": crash_at, "TSDB_CRASH_AFTER": str(crash_after)}

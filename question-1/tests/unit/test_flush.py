@@ -1,12 +1,12 @@
 """Flush end to end with real files (seams F1-F2). 1-minute smallest windows, as in the example."""
 
+import threading
 import random
 
 import pytest
 
 from tsdb.engine.flush import Flusher
 from tsdb.engine.state import LiveState
-from tsdb.engine.swap_lock import SwapLock
 from tsdb.engine.version import Version, VersionSet
 from tsdb.faults import NoFaults
 from tsdb.memtable.memtable import Memtable
@@ -29,17 +29,17 @@ def new_memtable():
 
 
 class FakeWal:
-    """Stands in for WalSet: rotate_all hands back the old segment files (which exist on disk)."""
+    """Stands in for Wal: rotate hands back the old segment file (which exists on disk)."""
 
     def __init__(self, layout):
         self.layout, self.rotations = layout, []
 
-    def rotate_all(self, new_segment_no, new_memtable):
-        old = self.layout.wal_segment(0, new_segment_no - 1)
+    def rotate(self, new_segment_no, new_memtable):
+        old = self.layout.wal_segment(new_segment_no - 1)
         old.parent.mkdir(parents=True, exist_ok=True)
         old.write_bytes(b"old wal bytes")
         self.rotations.append((new_segment_no, new_memtable))
-        return [old]
+        return old
 
 
 class Shard:
@@ -52,11 +52,11 @@ class Shard:
         self.tables = SSTableFactory(self.layout.sstable, files, faults, BloomFilterFactory(), 4096, 0.01)
         self.active = new_memtable()
         self.versions = VersionSet(Version(0, self.active, (), (), 0), on_obsolete=lambda t: None)
-        start = ManifestState(version=0, next_file_no=1, last_flushed_seq=0, wal_count=1, wal_segment=1)
+        start = ManifestState(version=0, next_file_no=1, last_flushed_seq=0, wal_segment=1)
         self.state = LiveState(self.manifest, self.versions, start, active_segment=1)
         self.wal = FakeWal(self.layout)
         self.flusher = Flusher(self.versions, self.wal, self.state, self.tables, new_memtable, files, faults,
-                               SwapLock(), smallest_window_ms=MINUTE)
+                               threading.Lock(), smallest_window_ms=MINUTE)
 
 
 STEP1 = [Point(1, T_10_00, 1, 30.1), Point(2, T_10_00, 2, 28.0), Point(3, T_10_00, 3, 32.5),
@@ -98,7 +98,7 @@ def test_a_flush_writes_one_file_per_window_and_makes_them_live_in_manifest_and_
     assert state.windows == ((W_10_00, ("000001.sst",)), (W_10_01, ("000002.sst",)))
     assert (state.next_file_no, state.last_flushed_seq, state.newest_data_ts, state.wal_segment) \
         == (3, 7, T_10_01, 2)                            # replay starts at segment 2 from now on
-    assert not shard.layout.wal_segment(0, 1).exists()   # the flushed WAL segment is gone
+    assert not shard.layout.wal_segment(1).exists()   # the flushed WAL segment is gone
 
 
 def test_a_second_flush_adds_to_the_windows_already_there(tmp_path):
@@ -139,6 +139,6 @@ def test_a_crash_during_flush_leaves_the_old_state_and_keeps_the_wal(tmp_path, p
         shard.flusher.flush(frozen)
 
     assert shard.manifest.load() is None                         # nothing committed: no new live file
-    assert shard.layout.wal_segment(0, 1).exists()               # the data is still in the WAL
+    assert shard.layout.wal_segment(1).exists()               # the data is still in the WAL
     assert shard.versions.current().immutables == (frozen,)      # readers still use the memtable
     assert (tmp_path / "sst" / "60000" / str(T_10_00) / leftover).exists()   # orphan for recovery to delete

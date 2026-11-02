@@ -29,7 +29,6 @@ class EngineConfig:
     bloom_false_positive_rate: float = 0.01
 
     # wal
-    wal_count: int = 1                    # N WAL files; series -> WAL by stable hash % N
     fsync: bool = True                    # False only for the memtable-only benchmark
 
     # compaction: size-tiered inside growing time windows

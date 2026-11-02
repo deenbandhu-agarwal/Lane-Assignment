@@ -51,8 +51,7 @@ class Shard:
                 writer.add(p)
             readers.append(self.tables.open_reader(self.tables.publish(writer.finish(), W_10_00, file_no), W_10_00))
         self.readers = readers
-        start = ManifestState(version=1, next_file_no=len(readers) + 1, last_flushed_seq=12, wal_count=1,
-                              wal_segment=1, newest_data_ts=T, windows=((W_10_00, tuple(r.name for r in readers)),))
+        start = ManifestState(version=1, next_file_no=len(readers) + 1, last_flushed_seq=12, wal_segment=1, newest_data_ts=T, windows=((W_10_00, tuple(r.name for r in readers)),))
         self.manifest.commit(start)
         active = Memtable(SkipList(random.Random(1)), 10**9, 100, 10**9)
         self.versions = VersionSet(Version(1, active, (), ((W_10_00, tuple(reversed(readers))),), T),
