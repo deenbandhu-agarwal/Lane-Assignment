@@ -1,6 +1,6 @@
 # docker compose up            -> run the database on http://localhost:8080
 # docker compose run --rm test -> run the whole test suite (offline)
-# docker compose run --rm bench -> run benchmarks, raw output in ./bench/results
+# docker compose run --rm bench -> run the benchmark, report in ./bench/out/results.md
 services:
   tsdb:
     build: .
@@ -8,7 +8,6 @@ services:
       - "8080:8080"
     environment:
       TSDB_DATA_DIR: /data
-      TSDB_WAL_COUNT: "1"
     volumes:
       - tsdb-data:/data
 
@@ -21,9 +20,9 @@ services:
   bench:
     build: .
     profiles: ["bench"]
-    command: ["uv", "run", "--frozen", "--no-sync", "python", "-m", "bench.run_bench"]
+    command: ["uv", "run", "--frozen", "--no-sync", "python", "bench/run.py", "--out", "bench/out/results.md"]
     volumes:
-      - ./bench/results:/app/bench/results
+      - ./bench/out:/app/bench/out
 
 volumes:
   tsdb-data:
