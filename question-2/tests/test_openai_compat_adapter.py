@@ -1,0 +1,111 @@
+"""OpenAI-compatible adapter against an in-process mock transport (no network)."""
+
+from __future__ import annotations
+
+import json
+
+import httpx
+import pytest
+
+from agent.models.base import ModelError
+from agent.models.openai_compat import OpenAICompatClient, from_wire, to_wire
+from agent.types import Message, ToolCall, ToolSpec
+
+
+def ok(message, prompt=100, completion=20):
+    return httpx.Response(
+        200, json={"choices": [{"message": message}], "usage": {"prompt_tokens": prompt, "completion_tokens": completion}}
+    )
+
+
+def client(responses, **kw):
+    seen, sleeps = [], []
+    queue = list(responses)
+
+    def handler(req):
+        seen.append(json.loads(req.content))
+        return queue.pop(0)
+
+    c = OpenAICompatClient(
+        "https://example.test/v1", "k", "m", transport=httpx.MockTransport(handler), sleep=sleeps.append, **kw
+    )
+    return c, seen, sleeps
+
+
+def test_wire_format_round_trip():
+    msgs = [
+        Message("system", "S"),
+        Message("user", "q"),
+        Message("assistant", "", tool_calls=(ToolCall("c1", "get_issue", '{"number": 3}'),)),
+        Message("tool", "result", tool_call_id="c1", tool_name="get_issue"),
+    ]
+    wire = to_wire(msgs)
+    assert [w["role"] for w in wire] == ["system", "user", "assistant", "tool"]
+    assert wire[2]["tool_calls"][0]["function"] == {"name": "get_issue", "arguments": '{"number": 3}'}
+    assert wire[3] == {"role": "tool", "tool_call_id": "c1", "content": "result"}
+
+
+def test_tool_call_reply_keeps_raw_arguments():
+    r = from_wire({"choices": [{"message": {"tool_calls": [
+        {"id": "x", "type": "function", "function": {"name": "search_notes", "arguments": "{bad json"}}
+    ]}}]})
+    assert r.tool_calls[0].raw_args == "{bad json"  # malformed args reach our validator
+
+
+def test_request_has_seed_temperature_tools():
+    c, seen, _ = client([ok({"content": "hi"})], seed=7)
+    assert c.complete([Message("user", "q")], [ToolSpec("t", "d", {"type": "object"})]).text == "hi"
+    body = seen[0]
+    assert body["seed"] == 7 and body["temperature"] == 0 and body["model"] == "m"
+    assert body["tools"][0]["function"]["name"] == "t"
+
+
+def test_429_waits_retry_after_then_succeeds():
+    c, _, sleeps = client([httpx.Response(429, headers={"retry-after": "3"}), ok({"content": "ok"})])
+    assert c.complete([Message("user", "q")], []).text == "ok"
+    assert sleeps == [3.5]
+
+
+def test_daily_quota_fails_fast():
+    c, _, sleeps = client([httpx.Response(429, headers={"retry-after": "50000"})])
+    with pytest.raises(ModelError, match="quota exhausted"):
+        c.complete([Message("user", "q")], [])
+    assert sleeps == []
+
+
+def test_400_not_retried():
+    c, _, sleeps = client([httpx.Response(400, json={"error": "bad"})])
+    with pytest.raises(ModelError, match="400"):
+        c.complete([Message("user", "q")], [])
+    assert sleeps == []
+
+
+def test_output_parse_failed_is_resampled():
+    # Groq 400 seen in eval run 2 (u3): a bad sample, not a bad request
+    bad = httpx.Response(400, json={"error": {"code": "output_parse_failed", "message": "Parsing failed"}})
+    c, seen, sleeps = client([bad, ok({"content": "not found"})])
+    assert c.complete([Message("user", "q")], []).text == "not found"
+    assert len(seen) == 2 and sleeps == []
+    assert seen[0]["temperature"] == 0 and seen[0]["seed"] == 42
+    assert seen[1]["temperature"] == 0.7 and "seed" not in seen[1]  # same request would repeat the bad output
+
+
+def test_temperature_stays_zero_on_ordinary_retries():
+    c, seen, _ = client([httpx.Response(503), ok({"content": "ok"})])
+    c.complete([Message("user", "q")], [])
+    assert [b["temperature"] for b in seen] == [0, 0]
+
+
+def test_output_parse_failed_gives_up_after_max_retries():
+    bad = lambda: httpx.Response(400, json={"error": {"code": "output_parse_failed"}})
+    c, seen, _ = client([bad() for _ in range(3)], max_retries=2)
+    with pytest.raises(ModelError, match="400"):
+        c.complete([Message("user", "q")], [])
+    assert len(seen) == 3
+
+
+def test_tool_use_failed_is_resampled_too():
+    # Groq validated k=20 against maximum 10 server-side and returned 400 (eval, u3)
+    bad = httpx.Response(400, json={"error": {"code": "tool_use_failed"}})
+    c, seen, _ = client([bad, ok({"content": "done"})])
+    assert c.complete([Message("user", "q")], []).text == "done" and len(seen) == 2
