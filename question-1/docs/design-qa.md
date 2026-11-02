@@ -226,7 +226,7 @@ Legend — **Outcome:** `decision` (changed the design) · `clarified` (no desig
 - **Answer:** A real server in a child process (`python -m tsdb`). Two ways to kill it: `TSDB_CRASH_AT=<point>` + `TSDB_CRASH_AFTER=<n>` makes `EnvFaults` SIGKILL the process from inside at the n-th hit of one of the 5 crash points; `test_kill9` kills it from outside at a random (seeded) moment while 4 client threads write and delete, 20 rounds on the same folder. The client remembers what got 200 (confirmed) and its one request without an answer (in flight). After restart, per (series, timestamp): the value must equal the model without the in-flight request or the model with it. Nothing confirmed may be missing, and nothing never sent may appear. Then the files are checked: no `.tmp`, and tables on disk = tables in the MANIFEST. Each case also asserts that the process really died by SIGKILL, so a crash point that is never reached is a failure, not a silent pass.
 - The harness was itself tested by breaking the engine on purpose: no WAL replay, WAL deleted before the MANIFEST commit, orphans not removed, compaction inputs deleted before the swap. Every break made a crash test fail.
 - **Limit:** SIGKILL keeps the OS page cache, so it does not imitate a power cut. Fsync correctness is covered by the failing-fsync tests (#46, #49), not by these.
-- **Outcome:** decision. `tests/crash/` (5 points × `wal_count` 1 and 2, plus kill -9 × `wal_count` 1 and 2, ~30 s).
+- **Outcome:** decision. `tests/crash/` (5 crash points plus 20 rounds of kill -9). The runs with 2 WALs were removed with the multi-WAL code (#55).
 
 ### 51. Can Rule 2 ever keep a tombstone with our compaction policy?
 - **Answer:** Not end to end, as far as the tests show. A tombstone piece is cut to one window. Every job takes ALL files nested in its top window (size-tiered: all files of the window; move-up: all children; late merge: the big file plus every extra). So no live table outside the job can hold the series in that range, and Rule 2 always says "drop". Found by a mutation check: making Rule 2 always drop failed no integration test. Making it never drop did fail one.
@@ -257,7 +257,3 @@ Legend — **Outcome:** `decision` (changed the design) · `clarified` (no desig
 ### Tooling
 - A prototype dump tool (outside this repo) printed SSTable / WAL / series.log / MANIFEST files as text (`--hex` for raw bytes) and showed a cut WAL record as "replay stops here". The engine ships the same as `tsdb-dump` (`src/tsdb/tools/dump.py`).
 
----
-
-## Open topics (not yet discussed)
-- Tombstone lifetime details · compaction strategy (size-tiered vs leveled) · snapshot mechanism for readers during compaction · fault-injection mechanism for the 5 crash points · language choice.

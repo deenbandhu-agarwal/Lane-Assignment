@@ -76,7 +76,7 @@ class Shard:
         self._background.run_until_idle()
 
     def close(self) -> None:
-        """Background first (a flush may still rotate WAL segments), then the WAL writers."""
+        """Background first (a flush may still rotate WAL segments), then the WAL writer."""
         self._background.stop()
         self._wal.close()
         for _, tables in self._versions.current().windows:

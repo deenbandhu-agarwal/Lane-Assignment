@@ -40,7 +40,7 @@ class EngineConfig:
 
     @staticmethod
     def from_env() -> "EngineConfig":
-        """Every field can be set as TSDB_<FIELD NAME> (TSDB_DATA_DIR, TSDB_WAL_COUNT, ...);
+        """Every field can be set as TSDB_<FIELD NAME> (TSDB_DATA_DIR, TSDB_MEMTABLE_MAX_ENTRIES, ...);
         tuples are comma separated. Unset fields keep their defaults; data_dir defaults to ./data."""
         values: dict[str, object] = {"data_dir": Path("data")}
         for f in fields(EngineConfig):
