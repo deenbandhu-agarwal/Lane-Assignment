@@ -1,6 +1,6 @@
 # Question 2: Design spec
 
-Status: agreed design, before implementation. Decisions and the reasoning behind them are in [`design-qa.md`](design-qa.md).
+Status: the design as agreed **before** implementation (kept as written). What changed while building is in [`design-qa.md`](design-qa.md) #16 onward and summarised in [`design.md`](design.md).
 
 ## 1. Goal
 

@@ -111,3 +111,27 @@ Legend. **Outcome:** `decision` (changed the design) · `clarified` (no design c
 ### 23. Why are m3 and m5 not scored in the retrieval experiment?
 - **Answer:** Their question text does not contain the search terms ("Issue #3 mentions an error code…"); the agent finds them only after `get_issue`. Searching the raw question scores 0 in every mode, which measures the question, not the retriever. They are listed as not scored and still count in the agent eval.
 - **Outcome:** decision.
+
+### 24. Which provider ran the agent eval?
+- **Answer:** GitHub Models answered every request (chat and catalog, with or without auth, VPN on or off, from the sandbox and from the user's own shell) with `200 text/plain "OK"`, so it was unusable from this network. Groq's free tier worked first time through the same OpenAI-compatible adapter: `openai/gpt-oss-120b`, ~$0.012 per 25-question run at list price.
+- **Outcome:** decision. Groq `gpt-oss-120b` for all README numbers. Second real provider through the port with zero loop changes.
+
+### 25. Why did run 1 score 12/25?
+- **Answer:** Mostly my harness. An unquoted ` #3` in YAML starts a comment, so 6 questions reached the model truncated ("What is issue"). Two more failed on Unicode: gpt-oss writes "Priya Raman" with U+202F and cites as `【…】`. Fixes: all questions quoted, the loader rejects questions not ending in `?`/`.`, answers NFKC-normalised before scoring and citation parsing. Run 1 is kept as committed evidence, labelled `run1-buggy-golden`.
+- **Outcome:** decision. Lesson for the design doc: validate the eval's inputs, not only the agent's outputs.
+
+### 26. Should a bad tool-call sample be retried, and how?
+- **Answer:** Groq returns 400 `output_parse_failed` (unparseable tool call) and `tool_use_failed` (call failed Groq's server-side schema check, e.g. `k=20` over max 10). Both are a bad sample, not a bad request. A plain retry at temperature 0 + seed reproduced the same broken output 4 times, so the retry re-samples at temperature 0.7 without the seed. First attempts stay deterministic; a run with a re-sample is not exactly repeatable.
+- **Outcome:** decision (user chose the warmer retry over leaving u3 as a known failure).
+
+### 27. Why was the agent's own error flagged as prompt injection?
+- **Answer:** The unknown-tool error lists every available tool, including `post_issue_comment`, and the detector flags data that mentions the write tool. Error results are written by our code, not external text, so only successful tool output is scanned now.
+- **Outcome:** decision.
+
+### 28. Can the agent cite something it fetched in an earlier turn?
+- **Answer:** Found in the demo: the model answered turn 2 from a note fetched in turn 1, and the per-run citation check flagged a correct citation. Now ids returned in the turns memory still holds in full (newest 2) are passed into the next run as prior evidence; ids from truncated turns are not, since the model no longer has that text.
+- **Outcome:** decision.
+
+### 29. How stable are the eval numbers?
+- **Answer:** Runs 2–4 had identical settings and scored 21, 21, 20, failing partly different questions (t1, m2, m4 come and go). The provider is not bit-deterministic even at temperature 0 with a seed. Report a range, not a point.
+- **Outcome:** clarified. README reports 20–21/25.
