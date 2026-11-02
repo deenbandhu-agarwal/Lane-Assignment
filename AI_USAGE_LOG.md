@@ -8,7 +8,7 @@ Covers both questions.
 |---|---|---|
 | Claude Code (Claude Opus) | Q1 | **Design discussion:** 55 recorded questions, each with the answer and the outcome ([`question-1/docs/design-qa.md`](question-1/docs/design-qa.md)). **Learning:** worked examples with real bytes and an animated walkthrough page, kept private (outside the repo). **Code:** scaffold with interfaces and DI, then the engine test-first: for each module I approved the test seams, the AI wrote the failing test, then the code, then a commit. **Testing:** crash harness, snapshot stress test, mutation checks (break the engine on purpose, confirm a test fails). **Measuring:** benchmark, Docker run, fsync timing. **Writing:** first drafts of the README and DESIGN.md |
 | Skill for Claude Code (mattpocock/skills `tdd`) | Q1 | The red → green loop, and agreeing the test seams before writing tests |
-| Claude Code | Q2 | _TBD_ |
+| Claude Code (Claude Opus) | Q2 | **Explaining and brainstorming:** the brief in plain words, BM25 / vectors / RRF, embeddings, free model options; every design question recorded with its answer ([`question-2/docs/design-qa.md`](question-2/docs/design-qa.md), 29 entries). **Code:** in 5 build steps from an agreed spec (loop, registry, gate, safety, retrieval, adapters), each with offline tests and a commit. **Corpus and golden set:** first drafts of the 15 notes, the seed data and the 25 questions. **Running:** seeding the sandbox repo, the real-model eval (4 runs) and the retrieval experiment, reading traces to find failures. **Writing:** first drafts of the README, design doc and experiment write-up |
 
 ## Cases where AI output was wrong or risky, and how they were caught
 
@@ -36,7 +36,32 @@ points/s: the fsyncs do not run in parallel on this disk, and all WALs feed one 
 to remove it: ~330 lines of code and tests went (#55).
 *Lesson: measure the simple version first.*
 
-Smaller ones, caught in review: the first scaffold had no dependency injection (each class built its
+**Q2-1. The eval harness, not the agent, failed half the first run.** Run 1 scored 12/25. Reading
+the answers showed questions arriving cut off ("What is issue"): in the AI-written `golden.yaml` an
+unquoted ` #3` starts a YAML comment, so 6 of 25 questions were truncated. Two more correct answers
+failed because the model wrote "Priya Raman" with a narrow no-break space (U+202F) and cited as
+`【…】`. Fixed by quoting, a loader check that rejects truncated questions, and Unicode normalisation
+before scoring; run 1 is kept in the repo, labelled as buggy (`design-qa.md` #25).
+*Lesson: validate the eval's inputs as carefully as the agent's outputs.*
+
+**Q2-2. A citation check that was too strict, found only in a live demo.** The
+citation check (an answer may only cite ids a tool returned) passed every test. In the recorded
+demo, the agent answered a follow-up from a note fetched one question earlier, and the check flagged
+a correct citation as unsupported, because it only counted the current question's tool results.
+Memory now carries citable ids from the turns it still holds in full (#28).
+*Lesson: per-run unit tests missed a multi-turn behaviour; a real conversation found it.*
+
+**Q2-3. A retry that could never succeed.** Groq rejected one answer with `output_parse_failed`.
+The AI added a retry, and the next run failed the same way 4 times: at temperature 0 with a fixed
+seed, the same request gives the same broken output. The retry now re-samples at temperature 0.7
+without the seed (I chose this over accepting the failure), and the trade-off, that such a run is
+not exactly repeatable, is written in the README (#26).
+
+Smaller ones, caught in review: (Q2) the AI first said `onnxruntime` had no Python 3.14t build;
+PyPI showed it does, and the real blocker was `py-rust-stemmers` (#1). It assumed GitHub Models
+would work as the eval provider; every call returned a plain "OK", so the eval moved to Groq (#24).
+The injection detector flagged the agent's own "unknown tool" error because it lists the write
+tool's name (#27). (Q1) the first scaffold had no dependency injection (each class built its
 own collaborators), so swapping the skip list was not a one-line change; a test now enforces it.
 The first worked example overwrote a memtable value in place, which breaks snapshot reads (#9).
 
@@ -49,5 +74,13 @@ The first worked example overwrote a memtable value in place, which breaks snaps
   multiple WALs, read cost across many series, tombstone memory, flush splitting at window edges.
 - **The test seams.** I approved the seams for every module before any test was written, and each
   green step was committed separately, so the history shows the order.
+- **Q2 decisions.** Gemini then Groq over paid APIs; local embeddings; a private sandbox repo
+  with no CI; Python 3.13; the six tools; the search design; the golden set; and that the model
+  must sit behind an abstraction so it can be swapped by config (it was, Gemini → Groq, no loop
+  change). The warmer retry for bad samples was my call after seeing the trade-off.
+- **Keeping brainstorming out of the repo.** Ideas were discussed in chat first; files were written
+  only after I agreed the design. The assessment brief and my own notes stay outside the repo.
+- **Q2 credentials.** I created the GitHub token (scoped to the sandbox repo only) and the model
+  keys myself; secrets live only in a git-ignored `.env`.
 - **Checking the numbers.** Benchmarks were re-run on a quiet machine and in Docker before they went
   into the README.
