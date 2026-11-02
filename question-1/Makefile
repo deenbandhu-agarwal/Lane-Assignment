@@ -13,8 +13,8 @@ test-docker:      ## the reviewer's one command
 up:
 	docker compose up --build
 
-bench:            ## regenerate bench/results/*
+bench:            ## regenerate bench/out/results.md (Docker)
 	docker compose run --rm --build bench
 
-dump:             ## make dump FILE=data/sst/L0/000001.sst
+dump:             ## make dump FILE=data/shard-0   (a file or a folder)
 	uv run tsdb-dump $(FILE)

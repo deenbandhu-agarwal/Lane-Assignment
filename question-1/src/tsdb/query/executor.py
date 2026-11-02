@@ -17,8 +17,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from tsdb.engine.version import Snapshot
+from tsdb.errors import QueryLimitError
 from tsdb.model import Aggregation, SeriesId, SeriesKey, Timestamp
 from tsdb.ports import AggregatorFactory, SeriesResolver
+from tsdb.query.aggregate import BucketAggregator
+from tsdb.query.merge import merge_series
 
 
 @dataclass(slots=True)
@@ -52,7 +55,51 @@ class QueryExecutor:
 
     def run(self, series_ids: list[SeriesId], from_ts: Timestamp, to_ts: Timestamp,
             agg: Aggregation | None, bucket_ms: int | None) -> QueryResult:
-        raise NotImplementedError
+        self._check_series_limit(series_ids)
+        version, seq = self._snapshot.version, self._snapshot.seq
+        self._points_read = 0
+        memtables = (version.active, *version.immutables)
+        tables = version.tables_overlapping(from_ts, to_ts)
+        all_tables = sum(len(ts) for _, ts in version.windows)
+        filter_skips = 0
+        cursors = [(t, t.cursor()) for t in tables]            # one forward-only cursor per table
+        result = QueryResult(series=[], agg=agg, bucket_ms=bucket_ms)
+        for series_id in series_ids:                           # ascending: cursors only move forward
+            tombstones = [t for m in memtables for t in m.tombstones_for(series_id, seq)]
+            tombstones += [t for table in tables for t in table.tombstones_for(series_id)]
+            sources = [m.read_series(series_id, from_ts, to_ts, seq) for m in memtables]
+            for table, cursor in cursors:
+                if table.may_contain(series_id, from_ts, to_ts):
+                    sources.append(cursor.read_series(series_id, from_ts, to_ts))
+                else:
+                    filter_skips += 1
+            points = self._count(merge_series(sources, tombstones))
+            if agg is None:
+                values = [(p.timestamp, p.value) for p in points]
+            else:
+                values = BucketAggregator(self._aggregators[agg], bucket_ms, from_ts).run(points)
+            if values:
+                result.series.append(SeriesResult(self._series.key_of(series_id), values))
+        result.stats = {"tables_in_range": len(tables), "tables_skipped_by_time": all_tables - len(tables),
+                        "tables_skipped_by_filter": filter_skips,
+                        "blocks_read": sum(c.blocks_read for _, c in cursors)}
+        return result
+
+    def _count(self, points):
+        """Counts points READ (also when aggregated): the limit bounds work, not answer size."""
+        for p in points:
+            self._points_read += 1
+            if self._points_read > self._max_points:
+                raise QueryLimitError(f"query reads more than {self._max_points} points; "
+                                      "narrow the time range or the filter")
+            yield p
 
     def list_series(self, series_ids: list[SeriesId]) -> SeriesListResult:
-        raise NotImplementedError
+        """Catalog only: a series exists even when every point of it is deleted (design-qa #41)."""
+        self._check_series_limit(series_ids)
+        return SeriesListResult([self._series.key_of(i) for i in series_ids])
+
+    def _check_series_limit(self, series_ids: list[SeriesId]) -> None:
+        if len(series_ids) > self._max_series:
+            raise QueryLimitError(f"query matches {len(series_ids)} series, limit is {self._max_series}; "
+                                  "narrow the filter")

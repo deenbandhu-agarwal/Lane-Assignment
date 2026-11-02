@@ -2,12 +2,16 @@
 
 Loop:
     1. take everything waiting in the queue
+       --- swap_lock (design-qa #45, D2): a memtable swap waits for this group ---
     2. give each entry the next seq (taken here, at append time, so seq rises inside this file)
     3. append all frames to the segment            -> faults.hit(WAL_APPEND)
-    4. ONE fsync for the whole group (+ series.log via before_ack, if new series)
-    5. apply the entries to the memtable (callback)
+    4. before_fsync() = catalog.sync() (series.log FIRST, design-qa #46), then ONE fsync for the group
+    5. apply the entries to the memtable (callback); seq.mark_applied(block)
+       --- release shared ---
     6. complete every waiting ticket -> the HTTP handlers reply 200
-If fsync or apply fails: FatalStorageError -> the process stops; recovery replays the WAL.
+If fsync or apply fails: every ticket in the group (and every later one) gets the error and the
+HTTP layer answers 500 and stops the process; recovery replays the WAL. A failed fsync is never
+retried: the kernel may have dropped the dirty pages, so a second fsync could "succeed" on lost data.
 """
 
 from __future__ import annotations
@@ -18,8 +22,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from tsdb.engine.seq import SequenceCounter
+from tsdb.faults import CrashPoint
 from tsdb.model import Point, SeriesId, Timestamp, Tombstone
 from tsdb.ports import FaultInjector
+from tsdb.wal.record import encode_delete, encode_put, frame
 from tsdb.wal.segment import WalSegment
 
 
@@ -47,37 +53,91 @@ class Ticket:
 
 
 ApplyFn = Callable[[list[Point | Tombstone]], None]
-BeforeAckFn = Callable[[], None]
+BeforeFsyncFn = Callable[[], None]
 
 
 class WalWriter:
-    def __init__(self, index: int, segment: WalSegment, seq: SequenceCounter, apply: ApplyFn,
-                 before_ack: BeforeAckFn, faults: FaultInjector) -> None:
-        self._index = index
+    def __init__(self, segment: WalSegment, seq: SequenceCounter, swap_lock: threading.Lock,
+                 apply: ApplyFn, before_fsync: BeforeFsyncFn, faults: FaultInjector) -> None:
+        self._swap_lock = swap_lock
         self._segment = segment
         self._seq = seq
         self._apply = apply
-        self._before_ack = before_ack
+        self._before_fsync = before_fsync
         self._faults = faults
         self._queue: queue.SimpleQueue[Ticket] = queue.SimpleQueue()
         self._thread: threading.Thread | None = None
+        self._failed: BaseException | None = None   # set once; never cleared (no fsync retry)
 
     def start(self) -> None:
-        raise NotImplementedError
+        self._thread = threading.Thread(target=self._run, name="wal-writer", daemon=True)
+        self._thread.start()
 
     def submit(self, ticket: Ticket) -> None:
-        raise NotImplementedError
+        """Returns at once; the caller waits on ticket.done and then checks ticket.error."""
+        self._queue.put(ticket)
 
     def switch_segment(self, new_segment: WalSegment) -> WalSegment:
-        """Called by WalSet.rotate_all() while writers are paused. Returns the old segment."""
-        raise NotImplementedError
+        """Called by Wal.rotate() under the swap lock. Returns the old segment."""
+        old, self._segment = self._segment, new_segment
+        return old
 
     def set_apply(self, apply: ApplyFn) -> None:
-        """Point at the new active memtable after a swap."""
-        raise NotImplementedError
+        """Point at the new active memtable after a swap (also under the swap lock)."""
+        self._apply = apply
 
     def stop(self) -> None:
-        raise NotImplementedError
+        if self._thread is not None:
+            self._queue.put(_STOP)
+            self._thread.join()
+            self._thread = None
+        self._segment.close()
 
     def _run(self) -> None:
-        raise NotImplementedError
+        while True:
+            first = self._queue.get()                     # wait for work
+            if first is _STOP:
+                return
+            group = [first]
+            while True:                                   # everything else already waiting joins the group
+                try:
+                    more = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                if more is _STOP:
+                    self._queue.put(_STOP)
+                    break
+                group.append(more)
+            if self._failed is None:
+                try:
+                    self._commit(group)
+                    continue
+                except Exception as e:            # FatalStorageError, or apply failed half way
+                    self._failed = e
+            for t in group:
+                t.error = self._failed
+                t.done.set()
+
+    def _commit(self, group: list[Ticket]) -> None:
+        pending = [e for t in group for e in t.entries]
+        with self._swap_lock:
+            first_seq = self._seq.next_block(len(pending))
+            entries = [_with_seq(e, first_seq + i) for i, e in enumerate(pending)]
+            self._segment.append(b"".join(
+                frame(encode_put(e) if isinstance(e, Point) else encode_delete(e)) for e in entries))
+            self._faults.hit(CrashPoint.WAL_APPEND)
+            self._before_fsync()
+            self._segment.sync()
+            self._apply(entries)
+            self._seq.mark_applied(first_seq, len(entries))
+        for t in group:
+            t.done.set()
+
+
+_STOP = object()
+
+
+def _with_seq(entry: PendingPut | PendingDelete, seq: int) -> Point | Tombstone:
+    if isinstance(entry, PendingPut):
+        return Point(entry.series_id, entry.timestamp, seq, entry.value)
+    return Tombstone(seq, entry.series_ids, entry.from_ts, entry.to_ts)

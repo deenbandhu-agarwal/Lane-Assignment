@@ -17,7 +17,10 @@ Tombstones, index, Bloom and footer are contiguous at the tail: open = 2 reads (
 from __future__ import annotations
 
 import struct
+import zlib
 from dataclasses import dataclass
+
+from tsdb.errors import CorruptFileError
 
 MAGIC = b"TSST"
 VERSION = 1
@@ -29,6 +32,8 @@ CRC = struct.Struct("<I")
 INDEX_ENTRY = struct.Struct("<IqQI")
 FOOTER = struct.Struct("<QIQIQIqqIIIHI4s")
 FOOTER_SIZE = FOOTER.size     # 74 bytes (72 + 2-byte version inside the footer)
+_FOOTER_CRC_AT = FOOTER_SIZE - 8    # crc32 covers every footer byte before the crc itself
+TOMBSTONE_HEAD = struct.Struct("<QqqI")   # seq, from, to, n; then n x u32 series ids
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,12 +52,23 @@ class Footer:
     version: int
 
     def pack(self) -> bytes:
-        raise NotImplementedError
+        fields = (self.index_offset, self.index_length, self.bloom_offset, self.bloom_length,
+                  self.tombstones_offset, self.tombstones_length, self.min_ts, self.max_ts,
+                  self.min_series_id, self.max_series_id, self.point_count, self.version)
+        body = FOOTER.pack(*fields, 0, MAGIC)[:_FOOTER_CRC_AT]
+        return FOOTER.pack(*fields, zlib.crc32(body), MAGIC)
 
     @staticmethod
     def unpack(data: bytes) -> "Footer":
         """Checks magic + checksum; raises CorruptFileError."""
-        raise NotImplementedError
+        if len(data) != FOOTER_SIZE:
+            raise CorruptFileError(f"footer is {len(data)} bytes, expected {FOOTER_SIZE}")
+        *fields, crc, magic = FOOTER.unpack(data)
+        if magic != MAGIC:
+            raise CorruptFileError(f"bad footer magic {magic!r}")
+        if zlib.crc32(data[:_FOOTER_CRC_AT]) != crc:
+            raise CorruptFileError("footer checksum mismatch")
+        return Footer(*fields)
 
 
 @dataclass(frozen=True, slots=True)

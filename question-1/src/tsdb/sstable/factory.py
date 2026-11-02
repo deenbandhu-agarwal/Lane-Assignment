@@ -6,11 +6,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+from tsdb.model import TimeWindow
 from tsdb.ports import FaultInjector, FileOps, MembershipFilterFactory
 from tsdb.sstable.reader import SSTableReader
 from tsdb.sstable.writer import SSTableWriter
 
-TablePathFn = Callable[[int, int], Path]     # (level, file_no) -> final path
+TablePathFn = Callable[[TimeWindow, int], Path]     # (window, file_no) -> final path
 
 
 class SSTableFactory:
@@ -23,12 +24,21 @@ class SSTableFactory:
         self._block_target_bytes = block_target_bytes
         self._filter_fp_rate = filter_fp_rate
 
-    def new_writer(self, level: int, file_no: int) -> SSTableWriter:
-        raise NotImplementedError
+    def new_writer(self, window: TimeWindow, file_no: int) -> SSTableWriter:
+        final = self._table_path(window, file_no)
+        self._files.make_dirs(final.parent)
+        tmp = final.with_name(final.name + ".tmp")
+        return SSTableWriter(tmp, window, self._files, self._faults, self._filters,
+                             self._block_target_bytes, self._filter_fp_rate)
 
-    def publish(self, tmp_path: Path, level: int, file_no: int) -> Path:
+    def publish(self, tmp_path: Path, window: TimeWindow, file_no: int) -> Path:
         """Rename .tmp -> final name, fsync the directory."""
-        raise NotImplementedError
+        final = self._table_path(window, file_no)
+        self._files.publish_tmp(tmp_path, final)
+        return final
 
-    def open_reader(self, path: Path, level: int) -> SSTableReader:
-        raise NotImplementedError
+    def open_reader(self, path: Path, window: TimeWindow) -> SSTableReader:
+        """Returns an OPENED reader (footer + tail loaded); raises CorruptFileError."""
+        reader = SSTableReader(path, window, self._files, self._filters)
+        reader.open()
+        return reader

@@ -2,16 +2,18 @@
 (directory creation and orphan cleanup go through ports.FileOps in Recovery).
 
     <shard_dir>/
-      MANIFEST                 live files, wal_count, segment number, last seq
+      MANIFEST                 live files, WAL segment number, last flushed seq
       series.log               series id <-> series key (append-only, framed records)
-      wal/<i>/<segment>.log    WAL i of N, one segment per memtable
-      sst/L<n>/<file_no>.sst   immutable sorted tables
+      wal/<segment>.log        the WAL, one segment per memtable
+      sst/<size_ms>/<start_ms>/<file_no>.sst   immutable sorted tables, one time window each
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+
+from tsdb.model import TimeWindow
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,17 +22,17 @@ class ShardLayout:
 
     @property
     def manifest(self) -> Path:
-        raise NotImplementedError
+        return self.root / "MANIFEST"
 
     @property
     def series_log(self) -> Path:
-        raise NotImplementedError
+        return self.root / "series.log"
 
-    def wal_segment(self, wal_index: int, segment: int) -> Path:
-        raise NotImplementedError
+    def wal_segment(self, segment: int) -> Path:
+        return self.root / "wal" / f"{segment:06d}.log"
 
-    def sstable(self, level: int, file_no: int) -> Path:
-        raise NotImplementedError
+    def sstable(self, window: TimeWindow, file_no: int) -> Path:
+        return self.root / "sst" / window.label() / f"{file_no:06d}.sst"
 
     def tmp_for(self, final_path: Path) -> Path:
-        raise NotImplementedError
+        return final_path.with_name(final_path.name + ".tmp")

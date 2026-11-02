@@ -1,0 +1,81 @@
+"""Rule 2: may compaction drop a tombstone? (seams R1-R3)
+
+Drop only if NO live table outside the job may hold a point the tombstone hides. Memtables are not
+checked: a tombstone inside a file was flushed, so every memtable entry has a bigger seq and can
+never be hidden by it (design-qa #43)."""
+
+from tsdb.compaction.compactor import tombstone_droppable
+from tsdb.compaction.policy import CompactionJob, JobKind
+from tsdb.engine.version import Version
+from tsdb.model import TimeWindow, Tombstone
+
+HOUR = 3_600_000
+SIX_HOURS = 6 * HOUR
+T_06_00 = 1_730_354_400_000
+T_10_00 = 1_730_368_800_000
+T_11_00 = 1_730_372_400_000
+W_10 = TimeWindow(HOUR, T_10_00)
+W_11 = TimeWindow(HOUR, T_11_00)
+W_06_12 = TimeWindow(SIX_HOURS, T_06_00)
+
+
+class FakeTable:
+    """Answers may_contain from a fixed set of series and a time range, like footer + Bloom."""
+
+    def __init__(self, name, series, min_ts, max_ts):
+        self.name, self._series, self.min_ts, self.max_ts = name, set(series), min_ts, max_ts
+
+    def may_contain(self, series_id, from_ts, to_ts):
+        return series_id in self._series and from_ts <= self.max_ts and to_ts >= self.min_ts
+
+
+def version(*windows):
+    return Version(number=1, active=None, immutables=(), windows=windows, newest_data_ts=T_11_00)
+
+
+DELETE_MUMBAI = Tombstone(10, (3,), T_10_00 + 30 * 60_000, T_10_00 + 45 * 60_000)   # 10:30-10:45
+
+A = FakeTable("000001.sst", {1, 2, 3}, T_10_00, T_10_00 + HOUR - 1)
+B = FakeTable("000002.sst", {1, 3}, T_10_00, T_10_00 + HOUR - 1)
+NEXT_HOUR = FakeTable("000003.sst", {1, 2, 3}, T_11_00, T_11_00 + HOUR - 1)
+
+
+def job(*inputs, window=W_10):
+    return CompactionJob(JobKind.SIZE_TIERED, inputs, window)
+
+
+def test_r1_dropped_when_the_job_holds_every_table_that_could_hide_data():
+    v = version((W_10, (A, B)), (W_11, (NEXT_HOUR,)))       # other hour does not overlap 10:30-10:45
+
+    assert tombstone_droppable(DELETE_MUMBAI, job(A, B), v)
+
+
+LATE_IN_SAME_HOUR = FakeTable("000004.sst", {3}, T_10_00 + 40 * 60_000, T_10_00 + 41 * 60_000)
+BIG_WINDOW = FakeTable("000009.sst", {1, 2, 3}, T_06_00, T_06_00 + SIX_HOURS - 1)
+
+
+def test_r2_kept_when_a_late_file_in_the_same_window_is_not_in_the_job():
+    v = version((W_10, (A, B, LATE_IN_SAME_HOUR)))
+
+    assert not tombstone_droppable(DELETE_MUMBAI, job(A, B), v)
+
+
+def test_r2_kept_when_the_bigger_parent_window_file_still_holds_old_data():
+    v = version((W_06_12, (BIG_WINDOW,)), (W_10, (A, B)))
+
+    assert not tombstone_droppable(DELETE_MUMBAI, job(A, B), v)
+
+
+def test_r3_dropped_when_an_outside_file_overlaps_in_time_but_surely_lacks_the_series():
+    other_series_only = FakeTable("000005.sst", {1, 2}, T_10_00, T_10_00 + HOUR - 1)   # no series 3
+    v = version((W_10, (A, B, other_series_only)))
+
+    assert tombstone_droppable(DELETE_MUMBAI, job(A, B), v)
+
+
+def test_r3_a_delete_over_several_series_is_kept_if_any_one_of_them_may_be_outside():
+    both = Tombstone(11, (1, 3), DELETE_MUMBAI.from_ts, DELETE_MUMBAI.to_ts)
+    has_series_1 = FakeTable("000005.sst", {1}, T_10_00, T_10_00 + HOUR - 1)
+    v = version((W_10, (A, B, has_series_1)))
+
+    assert not tombstone_droppable(both, job(A, B), v)

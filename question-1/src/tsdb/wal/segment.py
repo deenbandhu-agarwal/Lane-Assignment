@@ -15,17 +15,22 @@ class WalSegment:
 
     def open(self) -> None:
         """Create/open for append; fsync the directory on create (or the file may vanish)."""
-        raise NotImplementedError
+        created = not self._path.exists()
+        self._fd = self._files.open_append(self._path)
+        if created:
+            self._files.fsync_dir(self._path.parent)
 
     def append(self, data: bytes) -> None:
-        raise NotImplementedError
+        self._files.append(self._fd, data)
 
     def sync(self) -> None:
         """On failure FileOps raises FatalStorageError (we never retry a failed fsync)."""
-        raise NotImplementedError
+        self._files.fsync(self._fd)
 
     def close(self) -> None:
-        raise NotImplementedError
+        if self._fd is not None:
+            self._files.close(self._fd)
+            self._fd = None
 
     @property
     def path(self) -> Path:

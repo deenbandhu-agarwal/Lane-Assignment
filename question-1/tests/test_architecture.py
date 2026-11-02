@@ -2,6 +2,8 @@
 
 1. Dependency inversion: swappable implementation modules may be imported only by
    tsdb.bootstrap or by modules of their own package. Everyone else must use tsdb.ports.
+   Exception: tsdb.tools.* (e.g. tsdb-dump) are entry points that read one concrete file format
+   on purpose; the engine never imports them.
 2. Every default implementation structurally satisfies its port.
 """
 
@@ -26,8 +28,7 @@ SWAPPABLE = {
     "tsdb.storage.manifest": "tsdb.storage",
     "tsdb.catalog.inverted_index": "tsdb.catalog",
     "tsdb.catalog.series_catalog": "tsdb.catalog",
-    "tsdb.wal.wal_set": "tsdb.wal",
-    "tsdb.wal.routing": "tsdb.wal",
+    "tsdb.wal.wal": "tsdb.wal",
     "tsdb.engine.routing": "tsdb.engine",
 }
 
@@ -48,7 +49,7 @@ def test_only_bootstrap_imports_swappable_implementations():
     for path in SRC.rglob("*.py"):
         module = "tsdb." + ".".join(path.relative_to(SRC).with_suffix("").parts)
         module = module.removesuffix(".__init__")
-        if module == "tsdb.bootstrap":
+        if module == "tsdb.bootstrap" or module.startswith("tsdb.tools."):
             continue
         for imported in _imports(path):
             owner = SWAPPABLE.get(imported)
@@ -66,20 +67,18 @@ def test_default_implementations_satisfy_ports(tmp_path):
     from tsdb.sstable.bloom import BloomFilter, BloomFilterFactory
     from tsdb.storage.fileio import OsFileOps
     from tsdb.storage.manifest import ManifestStore
-    from tsdb.wal.routing import HashWalRouter
 
     store = SkipList(random.Random(1))
     files = OsFileOps()
     checks = [
         (store, ports.OrderedStore),
-        (Memtable(store, 1024), ports.MemtablePort),
+        (Memtable(store, 1024, 100, 1000), ports.MemtablePort),
         (BloomFilter(64, 7), ports.MembershipFilter),
         (BloomFilterFactory(), ports.MembershipFilterFactory),
         (files, ports.FileOps),
         (NoFaults(), ports.FaultInjector),
         (ManifestStore(tmp_path / "MANIFEST", files, NoFaults()), ports.ManifestPort),
         (InvertedIndex(), ports.PostingSource),
-        (HashWalRouter(1), ports.WalRouter),
         (SingleShardRouter(), ports.ShardRouter),
     ]
     missing = [f"{type(obj).__name__} !~ {port.__name__}" for obj, port in checks if not isinstance(obj, port)]
