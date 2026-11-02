@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import time
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
@@ -58,6 +58,7 @@ class RunResult:
     messages: list[Message]
     trace_path: Path
     turn_start: int = 0  # index in messages where this turn's user message is
+    evidence: frozenset[str] = frozenset()  # citable ids tools returned in this run
 
     @property
     def turn_messages(self) -> list[Message]:
@@ -108,7 +109,11 @@ class Agent:
 
     # -- the loop ------------------------------------------------------------------
 
-    def run(self, user_input: str, history: Sequence[Message] = ()) -> RunResult:
+    def run(
+        self, user_input: str, history: Sequence[Message] = (), prior_evidence: Iterable[str] = ()
+    ) -> RunResult:
+        """prior_evidence: ids returned by tools in earlier turns whose output is still in
+        `history` in full (see Memory.evidence). They may be cited without a new tool call."""
         tracer = Tracer.new(self.trace_dir)
         tracer.event(
             "run_start",
@@ -116,6 +121,7 @@ class Agent:
             limits=self.limits,
             user_input=user_input,
             history_len=len(history),
+            prior_evidence=sorted(prior_evidence),
         )
         messages: list[Message] = []
         if self.system_prompt:
@@ -126,6 +132,7 @@ class Agent:
         specs = self.tools.specs()
         write_tools = self.tools.write_tool_names()
         seen: Counter[tuple[str, str]] = Counter()
+        prior = frozenset(prior_evidence)
         evidence: set[str] = set()  # citable ids returned by tools in this run
         malformed_streak = 0
         step = 0
@@ -133,7 +140,7 @@ class Agent:
         def finish(reason: StopReason, answer: str = "") -> RunResult:
             text = answer if reason is StopReason.FINAL else STOP_TEXT[reason]
             if reason is StopReason.FINAL:
-                check = check_answer(text, evidence)
+                check = check_answer(text, evidence | prior)
                 tracer.event(
                     "citations",
                     cited=sorted(check.cited),
@@ -150,7 +157,9 @@ class Agent:
             )
             if reason is not StopReason.FINAL or text != answer:
                 messages.append(Message("assistant", text))  # what the user saw goes into memory
-            return RunResult(text, reason, step, budget.spent_usd, messages, tracer.path, turn_start)
+            return RunResult(
+                text, reason, step, budget.spent_usd, messages, tracer.path, turn_start, frozenset(evidence)
+            )
 
         try:
             while step < self.limits.max_steps:

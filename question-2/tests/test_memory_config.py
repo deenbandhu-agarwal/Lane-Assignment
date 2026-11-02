@@ -73,3 +73,20 @@ def test_dotenv_does_not_override_env_and_strips_comments(tmp_path, monkeypatch)
 
 def test_load_dotenv_missing_file_is_fine(tmp_path):
     load_dotenv(tmp_path / "nope")
+
+
+def test_memory_evidence_covers_only_full_turns():
+    m = Memory(max_turns=6, full_turns=2)
+    for ids in ({"a.md#1"}, {"b.md#1"}, {"issue#3"}):
+        m.add_turn([Message("user", "q")], frozenset(ids))
+    assert m.evidence() == {"b.md#1", "issue#3"}  # a.md#1's turn is now truncated
+
+
+def test_citation_from_previous_turn_is_accepted_only_when_passed_in(make_agent):
+    # demo finding: the model answered from a note fetched one turn earlier, which
+    # the per-run check wrongly flagged as unsupported
+    answer = "E4012 means the token expired [error-codes.md#2]."
+    alone = make_agent([text_reply(answer)]).run("again?")
+    assert alone.answer != answer  # no evidence anywhere -> replaced with not-found
+    with_memory = make_agent([text_reply(answer)]).run("again?", prior_evidence={"error-codes.md#2"})
+    assert with_memory.answer == answer

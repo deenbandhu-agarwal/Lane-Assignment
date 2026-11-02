@@ -8,6 +8,10 @@
 - A turn that stopped mid-way (loop, limit) can end with tool calls that never got a
   result; providers reject that, so a "not executed" result is filled in.
 
+Citations: ids returned in the full turns stay citable in the next turn (evidence());
+ids from truncated turns do not, so the citation check never trusts text the model no
+longer has.
+
 What is lost: details of old tool output (e.g. the full text of a note from 4 turns
 ago) and everything older than max_turns. Asking again re-runs the tool, which is
 cheap here. Summarization was rejected: it costs a model call per turn and can
@@ -46,10 +50,18 @@ class Memory:
     def __init__(self, max_turns: int = 6, full_turns: int = 2, preview_chars: int = 300) -> None:
         self.max_turns, self.full_turns, self.preview_chars = max_turns, full_turns, preview_chars
         self._turns: list[list[Message]] = []
+        self._evidence: list[frozenset[str]] = []
 
-    def add_turn(self, messages: list[Message]) -> None:
+    def add_turn(self, messages: list[Message], evidence: frozenset[str] = frozenset()) -> None:
         self._turns.append(repair(list(messages)))
+        self._evidence.append(frozenset(evidence))
         self._turns = self._turns[-self.max_turns :]
+        self._evidence = self._evidence[-self.max_turns :]
+
+    def evidence(self) -> frozenset[str]:
+        """Citable ids from the turns whose tool output history() still keeps in full.
+        Older turns are truncated, so their ids must be fetched again to be cited."""
+        return frozenset().union(*self._evidence[-self.full_turns :]) if self.full_turns else frozenset()
 
     def history(self) -> list[Message]:
         out: list[Message] = []

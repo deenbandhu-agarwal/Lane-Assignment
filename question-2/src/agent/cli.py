@@ -1,8 +1,8 @@
 """Chat with the agent.
 
-    uv run python -m agent.cli                         # interactive, real Gemini + real GitHub
+    uv run python -m agent.cli                         # interactive, real model + real GitHub
     uv run python -m agent.cli --ask "question"        # one question, then exit
-    uv run python -m agent.cli --offline-github        # real Gemini, in-memory sandbox repo
+    uv run python -m agent.cli --offline-github        # real model, in-memory sandbox repo
     uv run python -m agent.cli --mode bm25             # retrieval mode override
 
 Writes always stop for y/N on this terminal.
@@ -33,8 +33,8 @@ def main(argv: list[str] | None = None) -> int:
     memory = Memory()
 
     def ask(question: str) -> None:
-        r = agent.run(question, history=memory.history())
-        memory.add_turn(r.turn_messages)
+        r = agent.run(question, history=memory.history(), prior_evidence=memory.evidence())
+        memory.add_turn(r.turn_messages, r.evidence)
         print(f"\n{r.answer}\n")
         print(f"  [{r.stop_reason} | steps {r.steps} | est. ${r.cost_usd:.4f} | trace {r.trace_path}]")
 
